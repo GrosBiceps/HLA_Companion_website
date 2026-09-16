@@ -8,6 +8,10 @@ node_modules/
 out/
 build/
 dist/
+# ...sauf les empreintes de reproductibilite (cf. plus bas).
+!dist/
+dist/*
+!dist/*.sqlite.sha256
 
 # Production database artifacts
 # Les .sqlite sont des artefacts de build, reconstructibles par

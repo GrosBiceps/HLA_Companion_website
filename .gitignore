@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Production database artifacts
+# Les .sqlite sont des artefacts de build, reconstructibles par
+# scripts/build_sqlite.py — ils ne sont jamais versionnés.
+# Seul le .sha256 est suivi, comme preuve de reproductibilité.
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+!*.sqlite.sha256
+
+# Données sources (volumineuses, hors périmètre git)
+data/raw/
+data/processed/
+!data/synthetic/
+
+# Environnement
+.env
+.env*.local
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Superpowers SDD workspace
+.superpowers/
+
+# Divers
+.DS_Store
+*.log
+npm-debug.log*
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+.vscode/
+.idea/

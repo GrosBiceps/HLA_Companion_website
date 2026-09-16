@@ -65,10 +65,15 @@ function EntryCard({
 /**
  * Accueil — Server Component.
  *
- * Ordre d'affichage volontaire : la recherche vient juste sous le titre, mais
- * le cadrage epistemique la precede a l'ecran des resultats et reste au-dessus
- * des cartes d'entree. L'utilisateur ne peut pas atteindre une fiche sans
- * avoir croise l'encart.
+ * ORDRE D'AFFICHAGE. Le cadrage epistemique est place AVANT la recherche, donc
+ * avant tout chemin vers une fiche. C'est une correction : l'encart etait sous
+ * la recherche, dont le panneau de resultats etait `absolute` et le recouvrait
+ * — un utilisateur qui tapait des l'arrivee pouvait rejoindre une fiche allele
+ * sans avoir lu une ligne du cadrage. Le panneau est desormais dans le flux
+ * (cf. SearchBar) et l'encart le precede : les deux moities de la garantie.
+ *
+ * Elle reste une garantie de mise en page, pas un verrou : rien n'empeche un
+ * acces direct a /allele/... par URL. Les fiches portent leur propre rappel.
  *
  * ⚠ Aucun compteur n'est ecrit en dur : tous viennent de `getCorpusStats()`,
  * qui les calcule en base a chaque rendu.
@@ -94,9 +99,9 @@ export default function HomePage() {
         </p>
       </header>
 
-      <SearchBar />
+      <EpistemicNotice corpusVersion={corpus.version} />
 
-      <EpistemicNotice />
+      <SearchBar />
 
       <section aria-label="Statistiques du corpus">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

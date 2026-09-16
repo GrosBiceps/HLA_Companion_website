@@ -1,23 +1,150 @@
+import Link from "next/link";
 import { getCorpusVersion } from "@/lib/db";
+import { getCorpusStats } from "@/lib/queries";
+import { EpistemicNotice } from "@/components/EpistemicNotice";
+import { SearchBar } from "@/components/SearchBar";
+
+/** Allele vitrine de la demonstration. */
+const SHOWCASE_ALLELE = "HLA-DQB1*02:01";
+
+/** Formatage francais des entiers (espace insecable comme separateur). */
+const NUMBER_FORMAT = new Intl.NumberFormat("fr-FR");
+
+function formatBuiltAt(builtAt: string): string {
+  const date = new Date(builtAt);
+  if (Number.isNaN(date.getTime())) return builtAt;
+  return new Intl.DateTimeFormat("fr-FR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+function StatCard({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
+      <p className="text-xl font-bold text-slate-900">{value}</p>
+      <p className="mt-0.5 text-xs uppercase tracking-wide text-slate-600">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function EntryCard({
+  href,
+  title,
+  description,
+  starred = false,
+}: {
+  href: string;
+  title: string;
+  description: string;
+  starred?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className="block rounded-lg border border-slate-300 bg-white p-4
+                 transition hover:border-slate-800 hover:bg-slate-50"
+    >
+      <p className="font-semibold text-slate-900">
+        {starred ? (
+          <span aria-hidden="true" className="mr-1 text-amber-500">
+            ★
+          </span>
+        ) : null}
+        {title}
+      </p>
+      <p className="mt-1 text-sm text-slate-600">{description}</p>
+    </Link>
+  );
+}
 
 /**
- * Page d'accueil provisoire — remplacee par la recherche et les fiches
- * allele dans les taches suivantes. Elle sert ici de point d'entree minimal
- * pour que le scaffolding soit verifiable par `next build`.
+ * Accueil — Server Component.
+ *
+ * Ordre d'affichage volontaire : la recherche vient juste sous le titre, mais
+ * le cadrage epistemique la precede a l'ecran des resultats et reste au-dessus
+ * des cartes d'entree. L'utilisateur ne peut pas atteindre une fiche sans
+ * avoir croise l'encart.
+ *
+ * ⚠ Aucun compteur n'est ecrit en dur : tous viennent de `getCorpusStats()`,
+ * qui les calcule en base a chaque rendu.
  */
 export default function HomePage() {
   const corpus = getCorpusVersion();
+  const stats = getCorpusStats();
+
+  const coverage =
+    stats.yearMin !== null && stats.yearMax !== null
+      ? `${stats.yearMin}–${stats.yearMax}`
+      : "—";
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Compagnon bibliométrique HLA</h1>
-      <p className="text-slate-700">
-        Corpus <strong>{corpus.version}</strong> (univers {corpus.universe}) —{" "}
-        {corpus.nArticles} articles indexés.
-      </p>
-      <p className="text-sm text-slate-500">
-        L&apos;interface d&apos;exploration est en cours de construction.
-      </p>
+    <div className="space-y-8">
+      <header className="space-y-2">
+        <h1 className="text-2xl font-bold text-slate-900">
+          Compagnon bibliométrique HLA
+        </h1>
+        <p className="text-sm text-slate-700">
+          Explorer les co-occurrences entre allèles HLA et complications de la
+          transplantation rénale dans la littérature indexée.
+        </p>
+      </header>
+
+      <SearchBar />
+
+      <EpistemicNotice />
+
+      <section aria-label="Statistiques du corpus">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatCard
+            value={NUMBER_FORMAT.format(stats.nArticles)}
+            label="Articles"
+          />
+          <StatCard
+            value={NUMBER_FORMAT.format(stats.nOutcomes)}
+            label="Complications"
+          />
+          <StatCard
+            value={NUMBER_FORMAT.format(stats.nAlleles)}
+            label="Allèles"
+          />
+          <StatCard value={coverage} label="Couverture" />
+        </div>
+        <p className="mt-2 text-xs text-slate-600">
+          Corpus <strong>{corpus.version}</strong> (univers {corpus.universe}),
+          figé le {formatBuiltAt(corpus.builtAt)}. Corpus gelé : les chiffres
+          ne changent pas tant qu&apos;il n&apos;est pas reconstruit.
+        </p>
+      </section>
+
+      <section aria-label="Points d'entrée" className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide
+                       text-slate-700">
+          Par où commencer
+        </h2>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <EntryCard
+            starred
+            href={`/allele/${encodeURIComponent(SHOWCASE_ALLELE)}`}
+            title={`Allèle — ${SHOWCASE_ALLELE}`}
+            description="Toutes les complications co-mentionnées avec cet allèle, et les phrases sources."
+          />
+          <EntryCard
+            href="/complication"
+            title="Complication"
+            description="Partir d'une complication clinique et voir quels allèles l'accompagnent dans le texte."
+          />
+          <EntryCard
+            href="/graphe"
+            title="Graphe"
+            description="Vue d'ensemble des co-mentions du corpus, allèles et complications reliés."
+          />
+        </div>
+      </section>
     </div>
   );
 }

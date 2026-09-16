@@ -307,6 +307,57 @@ export function getAuthor(authorId: string): Author | null {
 }
 
 // --------------------------------------------------------------------------
+// Statistiques de corpus (barre d'accueil)
+// --------------------------------------------------------------------------
+
+export interface CorpusStats {
+  nArticles: number;
+  nOutcomes: number;
+  nAlleles: number;
+  yearMin: number | null;
+  yearMax: number | null;
+}
+
+/**
+ * Compteurs de la barre de statistiques de l'accueil.
+ *
+ * ⚠ CES CHIFFRES SONT CALCULES, JAMAIS ECRITS EN DUR. La spec pose la regle
+ * explicitement : un compteur code en dur ("~340 articles") est un defaut,
+ * parce qu'il ment des la reconstruction suivante du corpus. Le mockup de la
+ * spec porte un `[n]` a la place du nombre pour cette raison precise.
+ *
+ * On ne lit pas non plus `corpus_version.n_articles` : c'est une valeur
+ * declaree par le builder, alors qu'on veut ici le contenu reellement present
+ * dans la base rendue.
+ */
+export function getCorpusStats(): CorpusStats {
+  const db = getDb();
+
+  const articles = db
+    .prepare(
+      `SELECT COUNT(*) AS n, MIN(year) AS year_min, MAX(year) AS year_max
+         FROM articles`,
+    )
+    .get() as { n: number; year_min: number | null; year_max: number | null };
+
+  const outcomes = db
+    .prepare(`SELECT COUNT(*) AS n FROM outcomes`)
+    .get() as { n: number };
+
+  const alleles = db
+    .prepare(`SELECT COUNT(*) AS n FROM hla_entities`)
+    .get() as { n: number };
+
+  return {
+    nArticles: articles.n,
+    nOutcomes: outcomes.n,
+    nAlleles: alleles.n,
+    yearMin: articles.year_min,
+    yearMax: articles.year_max,
+  };
+}
+
+// --------------------------------------------------------------------------
 // Recherche unifiee (FTS5)
 // --------------------------------------------------------------------------
 

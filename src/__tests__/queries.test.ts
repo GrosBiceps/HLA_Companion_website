@@ -109,4 +109,11 @@ describe("searchEntities", () => {
   it("ne leve pas sur des caracteres speciaux FTS5", () => {
     expect(() => searchEntities('"; DROP TABLE articles; --')).not.toThrow();
   });
+
+  it("ne leve pas sur un octet NUL (atteignable via ?q=%00x)", () => {
+    // Le NUL passe le filtre alphanumerique mais tronque la chaine C cote
+    // SQLite, emportant le guillemet fermant -> "unterminated string".
+    expect(() => searchEntities("\0x")).not.toThrow();
+    expect(() => searchEntities("DQB1\0")).not.toThrow();
+  });
 });

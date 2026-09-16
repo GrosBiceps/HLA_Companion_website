@@ -15,6 +15,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
+      // `server-only` marque db.ts comme serveur-uniquement pour Next, mais
+      // leverait sous Vitest : on l'alias vers un stub inerte.
+      "server-only": path.resolve(__dirname, "test/server-only-stub.ts"),
     },
   },
 });

@@ -159,6 +159,10 @@ function toAssociation(row: AssociationSqlRow): AssociationRow {
  * Les lignes non significatives sont volontairement conservees : l'interface
  * les grise, elle ne les masque pas (une absence de signal est une
  * information).
+ *
+ * `a.outcome ASC` clot le tri : sans lui l'ordre des ex aequo (meme signal,
+ * meme effectif — 15 groupes dans le corpus) depend de l'implementation
+ * SQLite et pourrait changer d'une version a l'autre.
  */
 export function getAssociationsForAllele(hla: string): AssociationRow[] {
   const rows = getDb()
@@ -171,7 +175,7 @@ export function getAssociationsForAllele(hla: string): AssociationRow[] {
          FROM associations a
          JOIN outcomes o ON o.outcome = a.outcome
         WHERE a.hla = ?
-        ORDER BY ${SIGNAL_ORDER_SQL}, a.n_cooccurrence DESC`,
+        ORDER BY ${SIGNAL_ORDER_SQL}, a.n_cooccurrence DESC, a.outcome ASC`,
     )
     .all(hla) as AssociationSqlRow[];
   return rows.map(toAssociation);
@@ -200,6 +204,11 @@ interface PairMentionSqlRow {
 /**
  * Phrases sources d'une paire (allele, complication), avec les metadonnees
  * de l'article pour la citation. Les spans permettent le surlignage.
+ *
+ * Le nombre de lignes rendues egale toujours `nCooccurrence` de
+ * l'association correspondante : ce n'est pas une coincidence mais la
+ * validation V3 du builder (`scripts/build_sqlite.py`), qui refuse de
+ * construire la base si les deux divergent.
  */
 export function getPairMentions(
   hla: string,
@@ -312,11 +321,16 @@ export function getAuthor(authorId: string): Author | null {
  *
  * La base est ouverte en lecture seule : aucune injection ne peut ecrire.
  * Le risque traite ici est la levee d'exception, pas la modification.
+ *
+ * Les caracteres de controle sont retires EN PREMIER : un NUL survivrait au
+ * filtre alphanumerique (`"\0x"` contient bien une lettre) mais tronquerait
+ * la chaine C cote SQLite, emportant le guillemet fermant — d'ou une erreur
+ * "unterminated string" atteignable depuis `?q=%00x`.
  */
 function escapeFtsQuery(raw: string): string {
   const tokens = raw
     .split(/\s+/)
-    .map((t) => t.trim())
+    .map((t) => t.replace(/\p{C}/gu, "").trim())
     .filter((t) => t.length > 0)
     // On retire la ponctuation pure : `--` ou `;` seuls ne sont pas des
     // termes recherchables et produiraient des tokens vides cote FTS5.

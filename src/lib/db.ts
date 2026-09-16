@@ -9,6 +9,11 @@
  * depuis l'interface, le handle est ouvert avec `readonly: true`.
  */
 
+// Transforme un import depuis un Client Component en erreur de build nommee
+// ("This module cannot be imported from a Client Component module") plutot
+// qu'en "Module not found: Can't resolve 'fs'" illisible.
+// Alias vers un stub sous Vitest (cf. vitest.config.mts).
+import "server-only";
 import Database from "better-sqlite3";
 import path from "node:path";
 import type { CorpusVersion } from "./types";
@@ -16,7 +21,10 @@ import type { CorpusVersion } from "./types";
 let db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
-  if (db) return db;
+  // `db.open` garde le cas ou un chemin de fermeture serait ajoute plus tard :
+  // un handle ferme est reouvert au lieu d'etre resservi. Si une telle
+  // fermeture apparait, elle doit aussi remettre `cachedVersion` a null.
+  if (db && db.open) return db;
   const file =
     process.env.CORPUS_DB_PATH ??
     path.join(process.cwd(), "dist", "corpus_A_synthetic.sqlite");

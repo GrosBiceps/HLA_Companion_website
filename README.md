@@ -90,6 +90,23 @@ PubMed → filtrage → NLP → stats
 | Graphiques | Observable Plot |
 | Styles | Tailwind |
 
+### Dépendances épinglées
+
+Trois choix de versions sont délibérés. Ils paraissent arbitraires au milieu
+des autres plages `^`, mais les « corriger » casse le build.
+Le projet cible **Node 20** (cf. `engines`) :
+
+- **`better-sqlite3` figé à `12.2.0`, sans `^`.** C'est la dernière version
+  publiant un binaire précompilé pour Node 20 / win32-x64 (ABI 115). Au-delà,
+  `npm install` bascule sur `node-gyp`, qui échoue sans toolchain MSVC
+  (« You need to install Visual Studio »). À réévaluer en passant à Node 22+.
+- **`jsdom` maintenu en `^26`.** `jsdom@27` tire `@asamuzakjp/css-color@4`, qui
+  fait un `require()` d'un module ESM : `ERR_REQUIRE_ESM` au démarrage du
+  worker Vitest sous Node 20.
+- **`vitest.config.mts`, et non `.ts`.** Vitest 4 charge sa config en CJS ;
+  l'extension `.ts` déclenche `ERR_REQUIRE_ESM` sur `std-env`. L'alternative
+  (`"type": "module"`) casserait `postcss.config.mjs` et `tailwind.config.ts`.
+
 ---
 
 ## Données de développement

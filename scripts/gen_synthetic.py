@@ -16,6 +16,37 @@ Proprietes garanties par construction (les tests en dependent) :
   emis, jamais tirees independamment : la validation V3 du builder verifie
   `associations.n_cooccurrence == COUNT(pair_mentions)` pour chaque paire.
 
+CONTRAT STATISTIQUE — table de contingence unique et reconstructible
+--------------------------------------------------------------------
+Toutes les metriques d'une ligne (`pmi`, `npmi`, `log_odds`, `odds_ratio`,
+`or_ci_low/high`, `pval_fisher`, `pval_two_sided` et les FDR) sont calculees
+sur UNE SEULE table 2x2, construite ainsi a partir des colonnes publiees :
+
+    a = min(n_cooccurrence, n_hla_total, n_outcome_total)
+    b = n_hla_total - a
+    c = n_outcome_total - a
+    d = n_universe - a - b - c          # la table somme a n_universe
+
+Consequences, toutes verifiees par les tests :
+
+* Aucune metrique ne peut en contredire une autre. En particulier `npmi > 0`
+  equivaut a `odds_ratio > 1` : une ligne ne peut pas se declarer a la fois
+  fortement co-citee et fortement protectrice.
+* Les statistiques sont RECONSTRUCTIBLES : un consommateur qui refait le
+  calcul depuis `n_cooccurrence`, `n_hla_total`, `n_outcome_total` et
+  `n_universe` retrouve exactement les valeurs du fichier. Aucune table
+  rescalee, aucun ajustement local invisible.
+* Le signal inverse est DELIBERE mais produit en amont, par les comptages
+  (cf. `_build_pair_plan`) : un HLA tres present dans le corpus et
+  volontairement sous-cite face a un outcome frequent. Il n'est jamais
+  fabrique en gonflant la table apres coup.
+* Sous `INVERSE_MIN_N` co-occurrences, aucune conclusion de depletion n'est
+  publiee (`pval_two_sided = 1.0`) : une paire vue une ou deux fois ne peut
+  pas decrocher le badge "signal inverse".
+
+Ces nombres restent FICTIFS et ne sont pas comparables aux sorties du vrai
+pipeline : ils sont seulement internement coherents.
+
 Usage :
     python scripts/gen_synthetic.py --out data/synthetic --n-articles 400 --seed 42
 """
@@ -149,6 +180,17 @@ NEGATED_TEMPLATE = (
 NEGATION_TRIGGER = "no significant"
 NEGATED_RATE = 0.15
 
+# Plancher de co-occurrence en deca duquel une paire n'est pas eligible a une
+# conclusion de depletion. Certifier une association protectrice a p<0.005 sur
+# une seule mention, c'est badger du bruit comme du signal : sous ce seuil, les
+# p-values bilaterales sont ramenees a 1.0 (aucune conclusion), ce qui neutralise
+# le badge "signal inverse" via labels.compute_signal_level.
+INVERSE_MIN_N = 5
+
+# Plancher numerique des p-values : math.exp sous-deborde a 0.0 sur les tables
+# tres deseequilibrees, et un -log10(p) en aval produirait alors +inf.
+MIN_PVALUE = 1e-300
+
 # =====================================================================
 # HIERARCHIE HLA
 # =====================================================================
@@ -268,7 +310,23 @@ def fisher_exact(a, b, c, d):
     p_obs = probs[a] * (1 + 1e-9)
     p_two = sum(p for p in probs.values() if p <= p_obs) / total
 
-    return min(1.0, max(0.0, p_greater)), min(1.0, max(0.0, p_two))
+    # Clampe a MIN_PVALUE : math.exp sous-deborde a 0.0 sur les tables tres
+    # deseequilibrees, et -log10(0) vaudrait +inf cote consommateur.
+    return (
+        min(1.0, max(MIN_PVALUE, p_greater)),
+        min(1.0, max(MIN_PVALUE, p_two)),
+    )
+
+
+def _format_pvalue(p):
+    """Formate une p-value/FDR a 6 chiffres significatifs.
+
+    Preserve les tres petites valeurs (2e-17 reste 2e-17) la ou un
+    `round(p, 8)` les ecraserait a 0.0. Le resultat est un float, donc le
+    module csv l'ecrit de facon reproductible.
+    """
+    p = min(1.0, max(MIN_PVALUE, float(p)))
+    return float(f"{p:.6g}")
 
 
 def benjamini_hochberg(pvals):
@@ -358,24 +416,30 @@ def _weighted_sample(rng, population, weights, k):
             break
         r = rng.random() * total
         acc = 0.0
+        # `r < acc` (strict) avec r tire dans [0, total) garantit que la
+        # boucle trouve toujours un element : le cumul final vaut total > r.
+        # Un `<=` laissait passer un cas de repli qui biaisait silencieusement
+        # le tirage vers l'element de plus faible poids.
         for i, w in enumerate(wts):
             acc += w
-            if r <= acc:
+            if r < acc:
                 picked.append(pop.pop(i))
                 wts.pop(i)
                 break
-        else:
-            picked.append(pop.pop(-1))
-            wts.pop(-1)
     return picked
 
 
-def _build_pair_plan(rng, hla_rows):
+def _build_pair_plan(rng, hla_rows, n_articles):
     """Choisit les paires (hla, outcome) qui porteront du signal.
 
-    Les paires "protectrices" sont marquees ici mais leurs comptages restent
-    derives des pair_mentions : seule la table de contingence de fond (les
-    cellules b, c, d) est orientee pour produire OR < 1.
+    Le signal inverse est produit PAR LES COMPTAGES, jamais par un correctif
+    applique apres coup a la table de contingence. Une paire protectrice est
+    un HLA par ailleurs tres present dans le corpus (il accumule des mentions
+    sur d'autres outcomes, donc n_hla_total est eleve) mais delibrement
+    sous-cite face a un outcome lui-meme frequent. La co-occurrence observee
+    tombe alors sous n_a*n_b/N, et la depletion se lit directement dans les
+    donnees : npmi, odds_ratio et Fisher s'accordent tous en signe parce
+    qu'ils decoulent tous de la meme table.
     """
     mentionable = [
         r["hla"] for r in hla_rows
@@ -404,10 +468,17 @@ def _build_pair_plan(rng, hla_rows):
         (SHOWCASE_HLA, "BK_nephropathy"),
     ]
     # Paires protectrices : demonstration du badge "signal inverse".
+    # Chaque HLA ci-dessous est rendu tres present ailleurs (carrier_outcomes)
+    # puis sous-cite face a l'outcome cible, frequent par ailleurs.
     inverse_pairs = [
         ("HLA-DRB1*04", "acute_rejection"),
         ("HLA-DPB1*04", "DGF"),
         ("HLA-A*01", "graft_loss"),
+    ]
+    # Outcomes porteurs : gonflent n_hla_total sans toucher a la cible.
+    carrier_outcomes = [
+        "sensitization", "eGFR", "graft_survival", "chronic_rejection",
+        "complement_activation", "HLA_mismatch_outcome", "CMV",
     ]
 
     plan = {}
@@ -415,8 +486,47 @@ def _build_pair_plan(rng, hla_rows):
         plan[pair] = {"kind": "strong", "weight": rng.uniform(8.0, 14.0)}
     for pair in weak_pairs:
         plan[pair] = {"kind": "weak", "weight": rng.uniform(1.0, 2.0)}
+
+    # Les cibles protectrices ne sont PAS laissees au tirage pondere : le
+    # tirage se fait sans remise et les paires se concurrencent, donc un poids
+    # eleve ne garantit pas un comptage. On leur reserve un quota fixe
+    # d'articles (cf. _inverse_quota), ce qui rend le nombre de mentions
+    # deterministe et independant de la taille du corpus. Poids nul ici :
+    # elles n'apparaissent que via le quota.
     for pair in inverse_pairs:
-        plan[pair] = {"kind": "inverse", "weight": rng.uniform(2.5, 4.0)}
+        plan[pair] = {"kind": "inverse", "weight": 0.0}
+
+    # Les outcomes cibles doivent etre frequents dans le corpus : c'est
+    # n_outcome_total qui fixe l'attendu, donc l'ampleur de la depletion.
+    # On les cite abondamment via d'AUTRES alleles que les porteurs inverses.
+    inverse_targets = {out for _, out in inverse_pairs}
+    boosters = [h for h in mentionable
+                if h not in {hla for hla, _ in inverse_pairs}]
+    booster_scale = 1.0
+    # Sur un petit corpus, le test de Fisher manque de puissance : il faut
+    # elargir l'ecart entre observe (fixe par le quota) et attendu, donc citer
+    # les outcomes cibles par davantage d'alleles tiers.
+    n_boosters = 14 if n_articles >= 300 else max(6, len(boosters) // 2)
+    for outcome in sorted(inverse_targets):
+        for hla in boosters[:n_boosters]:
+            if (hla, outcome) in plan:
+                continue
+            plan[(hla, outcome)] = {
+                "kind": "booster",
+                "weight": rng.uniform(6.0, 10.0) * booster_scale,
+            }
+
+    # Presence de fond elevee pour les porteurs de signal inverse : c'est ce
+    # qui rend n_hla_total grand, donc l'attendu n_a*n_b/N grand devant la
+    # co-occurrence observee.
+    for hla, target in inverse_pairs:
+        for outcome in carrier_outcomes:
+            if (hla, outcome) == (hla, target) or (hla, outcome) in plan:
+                continue
+            plan[(hla, outcome)] = {
+                "kind": "carrier",
+                "weight": rng.uniform(9.0, 15.0),
+            }
 
     # Bruit de fond : beaucoup de paires faiblement couvertes.
     for hla in mentionable:
@@ -430,6 +540,26 @@ def _build_pair_plan(rng, hla_rows):
                 }
 
     return plan
+
+
+def _inverse_quota(plan, n_articles):
+    """Nombre d'articles reserves a chaque paire protectrice.
+
+    Le quota assure deux choses a toute taille de corpus :
+      * franchir INVERSE_MIN_N, sans quoi la depletion serait supprimee comme
+        du bruit et le badge "signal inverse" deviendrait indemontrable ;
+      * rester tres en dessous de l'attendu n_a*n_b/N, sans quoi il n'y aurait
+        plus de depletion du tout.
+    Un quota fixe (et non un poids) rend ce comptage deterministe : le tirage
+    pondere sans remise ne garantissait ni l'un ni l'autre.
+    """
+    pairs = sorted(k for k, v in plan.items() if v["kind"] == "inverse")
+    if not pairs:
+        return {}
+    # Juste au-dessus du plancher, et croissant tres lentement avec le corpus
+    # pour que la depletion (qui, elle, croit lineairement) reste nette.
+    quota = INVERSE_MIN_N + 1 + int(n_articles / 400)
+    return {pair: quota for pair in pairs}
 
 
 def _sentence_for(rng, hla, outcome, negated):
@@ -458,13 +588,21 @@ def _generate(rng, n_articles):
     author_names, author_weights = _make_authors(rng)
     authors = []
 
-    plan = _build_pair_plan(rng, hla_rows)
-    plan_keys = sorted(plan)
+    plan = _build_pair_plan(rng, hla_rows, n_articles)
+    # Les paires a quota (poids nul) sortent du tirage pondere : elles sont
+    # injectees explicitement, pas tirees.
+    plan_keys = [k for k in sorted(plan) if plan[k]["weight"] > 0.0]
     plan_weights = [plan[k]["weight"] for k in plan_keys]
+
+    # File deterministe des paires protectrices a placer, une par article.
+    quota = _inverse_quota(plan, n_articles)
+    forced_queue = []
+    for pair in sorted(quota):
+        forced_queue.extend([pair] * quota[pair])
 
     pair_mentions = []
 
-    for _ in range(n_articles):
+    for article_idx in range(n_articles):
         while True:
             pmid = str(rng.randint(10_000_000, 99_999_999))
             if pmid not in pmids:
@@ -475,8 +613,24 @@ def _generate(rng, n_articles):
         journal, abbrev = rng.choice(JOURNALS)
 
         # Les paires citees par cet article : tirage pondere par le plan.
-        n_pairs = rng.choices([1, 2, 3, 4], weights=[35, 35, 20, 10])[0]
+        # Un corpus reduit doit rester statistiquement exploitable : les
+        # marges n_hla_total / n_outcome_total y seraient sinon trop faibles
+        # pour que le test de Fisher ait la moindre puissance, et aucun signal
+        # (direct ou inverse) ne pourrait etre demontre. On cite donc un peu
+        # plus de paires par article quand le corpus est petit.
+        if n_articles < 300:
+            n_pairs = rng.choices([2, 3, 4, 5], weights=[15, 30, 35, 20])[0]
+        else:
+            n_pairs = rng.choices([1, 2, 3, 4], weights=[35, 35, 20, 10])[0]
         pairs = _weighted_sample(rng, plan_keys, plan_weights, n_pairs)
+
+        # Puis, le cas echeant, la paire protectrice due a cet article. On
+        # etale le quota sur le corpus plutot que de le concentrer en tete,
+        # pour que first_year et les timelines restent plausibles.
+        if forced_queue and article_idx % max(1, n_articles // (len(forced_queue) + 1)) == 0:
+            forced = forced_queue.pop(0)
+            if forced not in pairs:
+                pairs.append(forced)
 
         lead_hla, lead_outcome = pairs[0]
         lead_label = OUTCOME_SPANS[lead_outcome][0]
@@ -568,33 +722,37 @@ def _generate(rng, n_articles):
         n_a = len(hla_articles[hla])
         n_b = len(outcome_articles[outcome])
 
-        # Table 2x2 au niveau article. a est le nombre d'articles portant la
-        # paire ; n_ab (comptage de mentions) le majore parfois, donc on borne.
+        # ---------------------------------------------------------------
+        # TABLE 2x2 UNIQUE — toutes les metriques publiees en decoulent.
+        #
+        # Une seule table sert npmi, odds_ratio, l'IC et les deux tests de
+        # Fisher. C'est la condition pour que les metriques ne puissent pas
+        # se contredire : un npmi positif implique OR > 1, et inversement.
+        # Toute correction appliquee ici vaut donc pour tous les nombres de
+        # la ligne. Le signal inverse est produit en amont, par les
+        # comptages (cf. _build_pair_plan), jamais par un ajustement local.
+        #
+        # a est le nombre d'articles portant la paire ; n_ab compte les
+        # mentions et peut le majorer, donc on borne par les marges.
+        # ---------------------------------------------------------------
         a = min(n_ab, n_a, n_b)
-        kind = plan.get(key, {}).get("kind", "background")
+        b = max(0, n_a - a)          # articles avec l'HLA, sans cet outcome
+        c = max(0, n_b - a)          # articles avec l'outcome, sans cet HLA
+        # Complement honnete : la table somme exactement a n_universe, donc
+        # un consommateur qui reconstruit a, b, c a partir des colonnes
+        # publiees retrouve d et recalcule les memes p-values.
+        d = max(0, n_universe - a - b - c)
 
-        # Chaque article porte 1 a 4 paires : les marges brutes (n_a, n_b) sont
-        # donc tres larges devant n_universe, et l'independance y attendrait
-        # deja a ~ n_a*n_b/N. Une paire fortement co-citee ressortirait alors
-        # non significative, et une paire rare ressortirait faussement
-        # "protectrice". On rapporte la table a l'univers des articles citant
-        # l'outcome, ou l'enrichissement se lit correctement.
-        b = max(1, n_a - a)          # articles avec l'HLA, sans cet outcome
-        c = max(1, n_b - a)          # articles avec l'outcome, sans cet HLA
-        # Complement : articles ne citant ni l'un ni l'autre. Reste positif et
-        # assez grand pour que le test ait de la puissance.
-        d = max(a + b + c, n_universe)
-
-        if kind == "inverse":
-            # Depletion authentique : l'HLA est sous-represente parmi les
-            # articles citant l'outcome. On deplace la masse vers b et c sans
-            # toucher a la cellule a, qui reste derivee des pair_mentions.
-            b = b + 8 * max(a, 1) + 15
-            c = c + 8 * max(a, 1) + 15
-
-        pmi, npmi = pmi_npmi(n_ab, n_a, n_b, n_universe)
+        pmi, npmi = pmi_npmi(a, a + b, a + c, a + b + c + d)
         orr, log_or, ci_low, ci_high = odds_ratio_with_ci(a, b, c, d)
         p_greater, p_two = fisher_exact(a, b, c, d)
+
+        # Plancher de depletion : sous INVERSE_MIN_N co-occurrences, une
+        # conclusion "protectrice" ne reposerait que sur du bruit. On rend la
+        # paire non concluante du cote bilateral (p=1.0) sans toucher ni aux
+        # comptages ni a l'OR, qui restent affichables a titre descriptif.
+        if orr < 1.0 and n_ab < INVERSE_MIN_N:
+            p_two = 1.0
 
         rows.append({
             "hla": hla,
@@ -621,10 +779,13 @@ def _generate(rng, n_articles):
     fdr = benjamini_hochberg([r["pval_fisher"] for r in rows])
     fdr_two = benjamini_hochberg([r["pval_two_sided"] for r in rows])
     for r, f1, f2 in zip(rows, fdr, fdr_two):
-        r["pval_fisher"] = round(r["pval_fisher"], 8)
-        r["pval_two_sided"] = round(r["pval_two_sided"], 8)
-        r["fdr"] = round(f1, 8)
-        r["fdr_two_sided"] = round(f2, 8)
+        # Format a chiffres significatifs, jamais round(x, 8) : un p de 2e-17
+        # y serait ecrase a 0.0, reintroduisant l'underflow que MIN_PVALUE
+        # cherche a eviter (-log10(0) = +inf cote consommateur).
+        r["pval_fisher"] = _format_pvalue(r["pval_fisher"])
+        r["pval_two_sided"] = _format_pvalue(r["pval_two_sided"])
+        r["fdr"] = _format_pvalue(f1)
+        r["fdr_two_sided"] = _format_pvalue(f2)
 
     pair_mentions.sort(key=lambda m: (m["pmid"], m["hla"], m["outcome"], m["sentence_idx"]))
 

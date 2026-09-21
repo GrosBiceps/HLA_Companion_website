@@ -5,7 +5,7 @@ les décisions prises en cours de route.
 
 ---
 
-## Avancement : 6 tâches terminées et relues sur 10
+## Avancement : 8 tâches terminées et relues sur 10, 1 écrite en attente de revue
 
 | # | Tâche | État | Tests |
 |---|---|---|---|
@@ -15,13 +15,44 @@ les décisions prises en cours de route.
 | 4 | Scaffolding Next.js + accès données | ✅ relu *(1 correctif)* | 13 |
 | 5 | Landing page + cadrage épistémique | ✅ relu *(1 correctif)* | 26 |
 | 6 | Fiche allèle | ✅ relu *(1 correctif)* | 36 |
-| 7 | Tiroir de phrases | ⬜ à faire | — |
-| 8 | Fiches complication / article / auteur | ⬜ à faire | — |
-| 9 | Explorateur de graphe | ⬜ à faire | — |
+| 7 | Tiroir de phrases | ✅ relu, zéro finding | 47 |
+| 8 | Fiches complication / article / auteur | ✅ relu *(1 correctif)* | 74 |
+| 9 | **Explorateur de graphe** | ⚠️ **code écrit, commit `c15c6c3`, REVUE INTERROMPUE** | 96 |
 | 10 | Garde-fous + doc de bascule | ⬜ à faire | — |
 
-**Vérifié au 21/09** : 36 tests passent, `tsc --noEmit` propre, `npm run build`
-réussit, routes `/`, `/allele/[hla]`, `/api/search` générées.
+**Vérifié au 21/09** : 96 tests passent, `tsc --noEmit` propre, `npm run build`
+réussit, aucun serveur de dev orphelin.
+
+## ⚠️ La tâche 9 n'a pas terminé sa revue
+
+Le code est écrit, commité (`c15c6c3`) et poussé — 96 tests passent, build
+propre — mais la revue a été **interrompue par l'utilisateur** avant tout
+verdict (contrairement à la tâche 6, où l'implémenteur avait été coupé : ici
+c'est la relecture elle-même qui n'a pas eu lieu). Ne pas considérer cette
+tâche comme close.
+
+Points à vérifier en priorité à la reprise (déjà signalés par l'implémenteur
+lui-même, à confirmer par un relecteur indépendant) :
+
+- **Sigma.js et graphology ne sont pas installés** (vérifié : absents de
+  `package.json`), alors que la spec les recommandait. L'implémenteur a
+  substitué un rendu SVG en anneaux concentriques, en faisant valoir qu'aucune
+  dépendance lourde n'est justifiée pour un corpus qui plafonne à 54 nœuds
+  atteignables (sur les 150 permis). À juger : le rendu est-il réellement
+  utilisable (lisibilité, distinction HLA/complication, style des arêtes) ?
+- Le plafond de 150 nœuds ne peut pas être atteint par le corpus réel — la
+  troncature par force de signal a été testée séparément sur un graphe
+  synthétique de 300 nœuds. Vérifier que ce test exerce vraiment la logique.
+- La promesse de **bidirectionnalité** (HLA ↔ complication) : interroger
+  `getNeighborhood` avec une complication en centre, pas seulement un allèle.
+- Un lien mort `/graphe` vs `/graph` a été trouvé et corrigé par
+  l'implémenteur — même classe de bug que celui de la tâche 8 (`SearchBar`
+  pointant vers des routes inexistantes). Un test de garde générique a été
+  ajouté ; vérifier qu'il contrôle vraiment `page.tsx` contre le système de
+  fichiers, pas seulement les chemins actuels.
+- Round-trip de l'URL `?center=` pour les clés HLA contenant `*` et `:`.
+- Aucune métrique brute (NPMI/FDR/OR) ne doit apparaître dans les
+  tooltips/labels du graphe — seulement le vocabulaire qualitatif de signal.
 
 ---
 

@@ -5,7 +5,7 @@ les décisions prises en cours de route.
 
 ---
 
-## Avancement : 5 tâches terminées sur 10, 1 en attente de relecture
+## Avancement : 6 tâches terminées et relues sur 10
 
 | # | Tâche | État | Tests |
 |---|---|---|---|
@@ -14,7 +14,7 @@ les décisions prises en cours de route.
 | 3 | Builder + 8 validations bloquantes | ✅ relu | 15 |
 | 4 | Scaffolding Next.js + accès données | ✅ relu *(1 correctif)* | 13 |
 | 5 | Landing page + cadrage épistémique | ✅ relu *(1 correctif)* | 26 |
-| 6 | **Fiche allèle** | ⚠️ **code écrit, NON RELU** | 36 |
+| 6 | Fiche allèle | ✅ relu *(1 correctif)* | 36 |
 | 7 | Tiroir de phrases | ⬜ à faire | — |
 | 8 | Fiches complication / article / auteur | ⬜ à faire | — |
 | 9 | Explorateur de graphe | ⬜ à faire | — |
@@ -25,25 +25,29 @@ réussit, routes `/`, `/allele/[hla]`, `/api/search` générées.
 
 ---
 
-## ⚠️ La tâche 6 n'est pas relue
+## La tâche 6 a été relue a posteriori
 
-Le commit `2a9b50f` a été écrit puis interrompu par une limite de session,
-**avant de passer par la boucle de revue** qui a validé les tâches 1 à 5.
+L'implémenteur de la tâche 6 a été coupé par une limite de session avant
+d'écrire son rapport. Le code était néanmoins complet et fonctionnel
+(36 tests, build propre) ; il a été commité tel quel puis **relu comme une
+première revue complète**, avec la même rigueur que les tâches précédentes —
+vérifications en direct sur la base (`HLA-DQB1*02:01`, `HLA-A*01`), sondes
+HTTP sur le serveur de dev, balayage du vocabulaire causal sur le rendu réel.
 
-Les tests passent et le build tient, mais aucun relecteur n'a vérifié la
-conformité au brief ni la qualité. Les revues précédentes ont trouvé des
-défauts que les tests ne voyaient pas (voir plus bas) — ne pas considérer
-cette tâche comme close sans relecture.
+Un point notable : l'implémenteur a **corrigé un bug du brief lui-même**. Le
+brief demandait deux assertions de test mutuellement insatisfaisables
+(`textContent` concatène tout le sous-arbre, y compris un `<details>` fermé,
+donc « aucune métrique dans le texte » et « NPMI dans un `<details>` enfant »
+se contredisaient). L'implémenteur a mesuré le texte réellement visible à la
+place, documenté le choix, et gardé le test aussi mordant. Bonne pratique à
+retenir : quand un test du plan est intenable, corriger l'intention plutôt que
+l'affaiblir, et le dire explicitement.
 
-À vérifier en priorité sur cette tâche :
-
-- Le rappel de cadrage global (`GlobalFramingReminder.tsx`) rend-il bien sur
-  **toutes** les routes, y compris en accès direct par URL ?
-- `AssociationCard` masque-t-elle vraiment toutes les métriques par défaut ?
-- Les négations sont-elles affichées, et le non-significatif grisé plutôt que
-  masqué ?
-- L'URL `/allele/HLA-DQB1*02:01` résout-elle correctement (le `*` et le `:`
-  doivent être encodés) ?
+Deux correctifs mineurs appliqués après revue : un lien « Voir les N phrases »
+pointait vers une route `/paire/...` qui n'existe pas et n'est pas prévue (la
+tâche 7 ouvre un tiroir côté client sur la même page, pas une route dédiée) —
+transformé en bouton désactivé avec explication ; et une pluralisation
+française incorrecte au singulier (« 1 articles »).
 
 ---
 
@@ -158,5 +162,6 @@ par-dessus. Un utilisateur qui tapait immédiatement atteignait une fiche sans
 avoir lu une ligne du cadrage. Le `meta description` du site disait par
 ailleurs « associations » — le mot exact que l'encart existe pour réfuter.
 
-Ces quatre défauts ont en commun d'être invisibles aux tests. C'est l'argument
-pour faire relire la tâche 6 avant de l'utiliser.
+Ces quatre défauts ont en commun d'être invisibles aux tests — d'où l'intérêt
+de relire même du code dont les tests passent tous, ce qui a été fait pour la
+tâche 6 malgré l'absence de rapport d'implémenteur.

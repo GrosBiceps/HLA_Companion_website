@@ -144,7 +144,9 @@ export default function HomePage() {
             description="Partir d'une complication clinique et voir quels allèles l'accompagnent dans le texte."
           />
           <EntryCard
-            href="/graphe"
+            // Route en anglais (`/graph`) : c'est le chemin pose par le plan
+            // de taches. Le libelle affiche reste francais, comme partout.
+            href="/graph"
             title="Graphe"
             description="Vue d'ensemble des co-mentions du corpus, allèles et complications reliés."
           />

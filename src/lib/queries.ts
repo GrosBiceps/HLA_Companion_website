@@ -686,3 +686,371 @@ export function getArticleAuthors(
     isLast: row.is_last === 1,
   }));
 }
+
+// --------------------------------------------------------------------------
+// Task 9 — voisinage de graphe (explorateur bidirectionnel)
+//
+// AJOUT PUR : rien au-dessus n'est modifie. Meme regle que Task 8.
+// --------------------------------------------------------------------------
+
+export type GraphNodeType = "hla" | "outcome";
+
+export interface GraphNode {
+  id: string;
+  type: GraphNodeType;
+  /**
+   * Libelle AFFICHABLE. Pour un noeud `outcome` c'est le libelle clinique de
+   * la table `outcomes`, jamais la cle technique (`graft_loss`). Pour un
+   * noeud `hla` la cle EST le libelle d'usage ("HLA-DQB1*02:01").
+   */
+  label: string;
+  /** Categorie clinique (noeuds `outcome` uniquement) — code couleur. */
+  category: string | null;
+  /** Nombre de sauts depuis le centre : 0 = centre. Sert a l'opacite. */
+  distance: number;
+  /** Effectif de mentions du corpus — sert au dimensionnement du noeud. */
+  nMentions: number;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  /** Force qualitative : c'est ce qui est rendu, pas une metrique. */
+  signalLevel: SignalLevel;
+  nCooccurrence: number;
+  nNegated: number;
+  isSignificant: boolean;
+  /** Vrai si la majorite des mentions de la paire sont des negations. */
+  majorityNegative: boolean;
+}
+
+export interface Neighborhood {
+  center: GraphNode | null;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  /** Vrai si le plafond a coupe le voisinage (l'interface le signale). */
+  truncated: boolean;
+}
+
+/**
+ * PLAFOND DUR. La spec de conception met explicitement en garde contre le
+ * « hairball » : au-dela de quelques dizaines de noeuds un graphe de
+ * co-occurrence ne se lit plus, il se contemple. 150 est la limite retenue.
+ *
+ * Le corpus A synthetique sature a 54 noeuds a profondeur 5 : le plafond n'y
+ * est jamais atteint. Il est neanmoins implemente et teste (cf.
+ * `truncateBySignal`, exportee pour ca) parce que c'est une garantie sur le
+ * comportement du code, pas sur ce corpus-ci.
+ */
+export const GRAPH_NODE_CAP = 150;
+
+/** Rang d'affichage du signal — miroir TS de `SIGNAL_ORDER_SQL`. */
+const SIGNAL_RANK: Record<SignalLevel, number> = {
+  inverse: 0,
+  strong: 1,
+  clear: 2,
+  moderate: 3,
+  weak: 4,
+};
+
+interface NeighborSqlRow {
+  hla: string;
+  outcome: string;
+  label: string;
+  category: string;
+  n_cooccurrence: number;
+  n_positive: number;
+  n_negated: number;
+  signal_level: SignalLevel;
+  is_significant: number;
+}
+
+const NEIGHBOR_COLUMNS = `a.hla, a.outcome, o.label, o.category,
+         a.n_cooccurrence, a.n_positive, a.n_negated,
+         a.signal_level, a.is_significant`;
+
+/** Cle de noeud interne : le prefixe evite toute collision hla/outcome. */
+function nodeKey(type: GraphNodeType, id: string): string {
+  return `${type}:${id}`;
+}
+
+/**
+ * Identifie la nature du centre EN INTERROGEANT LA BASE, pas en devinant a
+ * partir de la forme de la chaine. Les cles HLA du corpus vont du locus nu
+ * ("DQB1") a l'allele 4-digit ("HLA-DQB1*02:01") : aucune regexp ne les
+ * separe sainement des cles d'outcome. `hla_entities` puis `outcomes` font
+ * autorite, dans cet ordre.
+ */
+function resolveCenter(centerId: string): GraphNode | null {
+  const db = getDb();
+
+  const hla = db
+    .prepare(`SELECT hla, n_mentions FROM hla_entities WHERE hla = ?`)
+    .get(centerId) as { hla: string; n_mentions: number } | undefined;
+  if (hla) {
+    return {
+      id: hla.hla,
+      type: "hla",
+      label: hla.hla,
+      category: null,
+      distance: 0,
+      nMentions: hla.n_mentions,
+    };
+  }
+
+  const outcome = db
+    .prepare(
+      `SELECT outcome, label, category, n_mentions
+         FROM outcomes WHERE outcome = ?`,
+    )
+    .get(centerId) as OutcomeSqlRow | undefined;
+  if (outcome) {
+    return {
+      id: outcome.outcome,
+      type: "outcome",
+      // Le libelle clinique, jamais `outcome.outcome`.
+      label: outcome.label,
+      category: outcome.category,
+      distance: 0,
+      nMentions: outcome.n_mentions,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Tronque un ensemble de noeuds au plafond, PAR FORCE DE SIGNAL DECROISSANTE.
+ *
+ * Exportee pour etre testable directement : le corpus A ne permet pas
+ * d'atteindre 150 noeuds, la garantie serait donc sinon invérifiable.
+ *
+ * Regles de coupe, dans l'ordre :
+ *  1. le centre (distance 0) n'est jamais coupe ;
+ *  2. sinon on classe par meilleur signal porte par une arete incidente
+ *     (inverse > strong > clear > moderate > weak — l'ordre du projet), puis
+ *     par distance croissante, puis par effectif decroissant, puis par id
+ *     pour rendre la coupe deterministe.
+ *
+ * `inverse` est en tete parce qu'une piste de protection est une information
+ * forte : la couper en premier reviendrait a masquer ce que le projet tient a
+ * montrer.
+ */
+export function truncateBySignal(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  cap: number = GRAPH_NODE_CAP,
+): { nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean } {
+  if (nodes.length <= cap) return { nodes, edges, truncated: false };
+
+  // Meilleur rang de signal observe sur une arete incidente a chaque noeud.
+  const best = new Map<string, number>();
+  for (const e of edges) {
+    const rank = SIGNAL_RANK[e.signalLevel] ?? 5;
+    for (const end of [e.source, e.target]) {
+      const current = best.get(end);
+      if (current === undefined || rank < current) best.set(end, rank);
+    }
+  }
+
+  const ordered = [...nodes].sort((a, b) => {
+    if (a.distance === 0 || b.distance === 0) {
+      return (a.distance === 0 ? 0 : 1) - (b.distance === 0 ? 0 : 1);
+    }
+    const ra = best.get(a.id) ?? 5;
+    const rb = best.get(b.id) ?? 5;
+    if (ra !== rb) return ra - rb;
+    if (a.distance !== b.distance) return a.distance - b.distance;
+    if (a.nMentions !== b.nMentions) return b.nMentions - a.nMentions;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+
+  const kept = ordered.slice(0, cap);
+  const keptIds = new Set(kept.map((n) => n.id));
+
+  // AUCUNE ARETE PENDANTE : on rejette toute arete dont une extremite a saute.
+  return {
+    nodes: kept,
+    edges: edges.filter((e) => keptIds.has(e.source) && keptIds.has(e.target)),
+    truncated: true,
+  };
+}
+
+/**
+ * Voisinage BFS bidirectionnel autour d'un allele OU d'une complication.
+ *
+ * Le graphe est biparti : une arete relie toujours un noeud `hla` a un noeud
+ * `outcome`, via la table `associations`. Partir d'un outcome est donc le
+ * meme parcours, dans l'autre sens — c'est la promesse de navigation inverse
+ * du projet, tenue au niveau du graphe.
+ *
+ * RIEN N'EST FILTRE PAR DEFAUT. Les negations sont toujours presentes, le non
+ * significatif aussi : l'interface les de-emphase (trait pointille, opacite),
+ * elle ne les retire pas. `minSignal` est un filtre OPTIONNEL du lecteur ;
+ * son absence inclut tout. Quand il est pose, il s'applique AVANT le parcours
+ * (une arete trop faible ne propage pas non plus la marche), sinon le filtre
+ * afficherait des noeuds sans arete visible.
+ *
+ * `depth` est borne a [0, 5] : au-dela le plafond de noeuds tranche de toute
+ * facon, et une valeur negative ou NaN ne doit pas produire une boucle.
+ */
+export function getNeighborhood(
+  centerId: string,
+  depth: number,
+  minSignal?: SignalLevel,
+): Neighborhood {
+  const center = resolveCenter(centerId);
+  if (!center) {
+    return { center: null, nodes: [], edges: [], truncated: false };
+  }
+
+  const hops = Number.isFinite(depth)
+    ? Math.min(Math.max(Math.trunc(depth), 0), 5)
+    : 1;
+
+  const db = getDb();
+  const maxRank = minSignal === undefined ? 5 : SIGNAL_RANK[minSignal];
+
+  const byHla = db.prepare(
+    `SELECT ${NEIGHBOR_COLUMNS}
+       FROM associations a
+       JOIN outcomes o ON o.outcome = a.outcome
+      WHERE a.hla = ?`,
+  );
+  const byOutcome = db.prepare(
+    `SELECT ${NEIGHBOR_COLUMNS}
+       FROM associations a
+       JOIN outcomes o ON o.outcome = a.outcome
+      WHERE a.outcome = ?`,
+  );
+
+  const nodes = new Map<string, GraphNode>();
+  const edges = new Map<string, GraphEdge>();
+  nodes.set(nodeKey(center.type, center.id), center);
+
+  // Effectifs HLA, pour dimensionner les noeuds decouverts en chemin.
+  const hlaMentions = new Map<string, number>();
+  for (const row of db
+    .prepare(`SELECT hla, n_mentions FROM hla_entities`)
+    .all() as { hla: string; n_mentions: number }[]) {
+    hlaMentions.set(row.hla, row.n_mentions);
+  }
+
+  let frontier: GraphNode[] = [center];
+
+  for (let hop = 1; hop <= hops && frontier.length > 0; hop++) {
+    const next: GraphNode[] = [];
+
+    for (const from of frontier) {
+      const rows = (
+        from.type === "hla" ? byHla.all(from.id) : byOutcome.all(from.id)
+      ) as NeighborSqlRow[];
+
+      for (const row of rows) {
+        if ((SIGNAL_RANK[row.signal_level] ?? 5) > maxRank) continue;
+
+        const hlaKey = nodeKey("hla", row.hla);
+        const outKey = nodeKey("outcome", row.outcome);
+
+        if (!nodes.has(hlaKey)) {
+          const node: GraphNode = {
+            id: row.hla,
+            type: "hla",
+            label: row.hla,
+            category: null,
+            distance: hop,
+            nMentions: hlaMentions.get(row.hla) ?? 0,
+          };
+          nodes.set(hlaKey, node);
+          next.push(node);
+        }
+        if (!nodes.has(outKey)) {
+          const node: GraphNode = {
+            id: row.outcome,
+            type: "outcome",
+            // Libelle clinique joint depuis `outcomes` : jamais la cle.
+            label: row.label,
+            category: row.category,
+            distance: hop,
+            nMentions: 0,
+          };
+          nodes.set(outKey, node);
+          next.push(node);
+        }
+
+        const edgeId = `${row.hla}--${row.outcome}`;
+        if (!edges.has(edgeId)) {
+          edges.set(edgeId, {
+            id: edgeId,
+            source: row.hla,
+            target: row.outcome,
+            signalLevel: row.signal_level,
+            nCooccurrence: row.n_cooccurrence,
+            nNegated: row.n_negated,
+            isSignificant: row.is_significant === 1,
+            majorityNegative: row.n_negated * 2 > row.n_cooccurrence,
+          });
+        }
+      }
+    }
+
+    frontier = next;
+  }
+
+  // Effectif reel des noeuds outcome presents (le n_mentions de `outcomes`).
+  const outcomeIds = [...nodes.values()]
+    .filter((n) => n.type === "outcome")
+    .map((n) => n.id);
+  if (outcomeIds.length > 0) {
+    const rows = db
+      .prepare(
+        `SELECT outcome, n_mentions FROM outcomes
+          WHERE outcome IN (${outcomeIds.map(() => "?").join(",")})`,
+      )
+      .all(...outcomeIds) as { outcome: string; n_mentions: number }[];
+    for (const row of rows) {
+      const node = nodes.get(nodeKey("outcome", row.outcome));
+      if (node) node.nMentions = row.n_mentions;
+    }
+  }
+
+  const capped = truncateBySignal(
+    [...nodes.values()],
+    [...edges.values()],
+    GRAPH_NODE_CAP,
+  );
+
+  return {
+    center,
+    nodes: capped.nodes,
+    edges: capped.edges,
+    truncated: capped.truncated,
+  };
+}
+
+/**
+ * Point de depart du graphe quand aucun `?center=` n'est fourni.
+ *
+ * CALCULE, PAS CODE EN DUR. Le meme principe que `getCorpusStats` : une cle
+ * ecrite en dur mentirait a la reconstruction suivante du corpus (l'allele
+ * vedette d'aujourd'hui peut disparaitre demain). On prend l'allele portant
+ * le plus d'aretes de fort signal, puis le plus mentionne — c'est le point
+ * d'entree le plus informatif, et il reste valable quel que soit le corpus.
+ */
+export function getDefaultGraphCenter(): string | null {
+  const row = getDb()
+    .prepare(
+      `SELECT a.hla,
+              SUM(CASE WHEN a.signal_level IN ('inverse','strong','clear')
+                       THEN 1 ELSE 0 END) AS n_forts,
+              COUNT(*) AS n_aretes
+         FROM associations a
+         JOIN hla_entities h ON h.hla = a.hla
+        GROUP BY a.hla
+        ORDER BY n_forts DESC, n_aretes DESC, h.n_mentions DESC, a.hla ASC
+        LIMIT 1`,
+    )
+    .get() as { hla: string } | undefined;
+  return row?.hla ?? null;
+}

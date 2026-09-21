@@ -45,11 +45,95 @@ synthétique. Les deux ne sont pas identiques.
 | `association_stats_v2.csv` | `associations.csv` |
 | `merged_corpus_renal.csv` | `articles.csv` |
 
-> ⚠️ **Un `mv` ne suffira pas.** Les noms de colonnes diffèrent très
-> probablement entre la sortie brute du pipeline et la forme que le builder
-> lit. Il faut écrire **une petite étape de transformation** (un script de
-> conversion, ~50 lignes de `pandas` ou de `csv`) qui renomme les colonnes et
-> projette les champs attendus.
+> ⚠️ **Ce n'est ni un `mv`, ni un simple renommage de colonnes.**
+> C'est une étape de **jointure et de dérivation**, et une partie des champs
+> requis **n'existe pas dans les sorties CSV documentées du pipeline**. Il
+> faudra vraisemblablement **modifier le pipeline en amont** pour qu'il
+> exporte des champs qu'il calcule déjà en interne mais n'écrit pas.
+> Budgéter cette tâche comme un petit script de conversion serait une
+> **sous-estimation importante**.
+
+### 2.1 `hla_outcome_pairs_v2.csv` → `pair_mentions.csv` : quatre champs manquants
+
+Colonnes documentées du pipeline (design spec, contrat dérivé de
+`extract_hla_v2.py`) :
+
+```
+pmid, hla, hla_resolution, hla_locus, hla_class, outcome, negated, year, source
+```
+
+Colonnes lues par le builder (`_populate`, insertion dans `pair_mentions`) :
+
+```
+pmid, hla, outcome, sentence, hla_span, outcome_span, polarity,
+negation_trigger, sentence_idx
+```
+
+Comparaison champ par champ :
+
+| Champ attendu | Disponible ? | Commentaire |
+|---|---|---|
+| `pmid`, `hla`, `outcome` | ✅ | Directs |
+| `polarity` | ⚠️ **À dériver** | Le pipeline fournit `negated` (booléen) ; le builder attend une polarité. Transformation simple, mais obligatoire — accès `r["polarity"]`, donc `KeyError` si absent. |
+| `sentence` | ❌ **ABSENT** | Accès `r["sentence"]` : **le build échoue** sans ce champ. |
+| `hla_span` | ❌ **ABSENT** | `hla_mentions_v2.csv` porte bien un `span`, mais pas le fichier de paires. |
+| `outcome_span` | ❌ **ABSENT** | idem via `outcome_mentions_v2.csv`. |
+| `sentence_idx` | ❌ **ABSENT** | Aucune colonne équivalente. |
+
+> ### 🔴 Ces quatre champs portent la fonctionnalité centrale du site
+>
+> `sentence`, `hla_span`, `outcome_span` et `sentence_idx` alimentent le
+> **tiroir de phrases** — la vue qui permet de remonter de chaque valeur
+> agrégée aux phrases sources, et qui est la justification épistémique du
+> projet entier (« traçable en deux clics »). Sans ces champs :
+>
+> - le build **échoue** (`sentence` est un accès direct, pas un `.get()`) ;
+> - même rendu tolérant, le tiroir de phrases et le surlignage
+>   (`HighlightedSentence`) n'auraient plus rien à afficher.
+>
+> Ces champs ne figurent dans **aucune** des sorties CSV documentées. Le
+> pipeline les manipule nécessairement au moment de l'extraction (c'est au
+> niveau de la phrase que les paires sont repérées), mais il ne les
+> **exporte pas**. → **Action probable côté pipeline**, pas côté réception :
+> faire écrire ces colonnes par `extract_hla_v2.py`, ou exporter l'étape
+> intermédiaire phrase-par-phrase dont elles proviennent.
+
+### 2.2 `association_stats_v2.csv` → `associations.csv` : une jointure requise
+
+| Champ attendu | Disponible ? | Commentaire |
+|---|---|---|
+| `n_cooccurrence` | ⚠️ Renommage | Le pipeline le nomme `n_co`. |
+| `n_hla_total`, `n_outcome_total`, `n_universe` | ⚠️ Renommage | `n_hla`, `n_outcome`, `N`. |
+| `pmi`, `npmi`, `log_odds`, `odds_ratio`, `or_ci_low`, `or_ci_high`, `pval_fisher`, `fdr`, `fdr_two_sided` | ✅ | Directs |
+| `pval_two_sided` | ⚠️ Renommage | `pval_fisher_two_sided`. |
+| **`n_positive`, `n_negated`** | ❌ **JOINTURE** | Absents de `association_stats_v2.csv`. Le pipeline sépare les mentions négées dans un fichier distinct, **`negated_pairs_v2.csv`**, qu'il faut agréger par `(hla, outcome)` puis joindre. |
+| `npmi_geo`, `first_year` | ⚠️ À dériver | `first_year` se dérive des années des articles. |
+
+> **`n_positive` / `n_negated` ne sont pas un détail de colonne.** La
+> séparation des mentions négées est un invariant central du projet (spec
+> §4.5) : une mention « pas d'association entre X et Y » ne doit jamais être
+> comptée comme une co-occurrence positive. La validation **V4** vérifie la
+> cohérence `n_positive + n_negated`. Une jointure bâclée sur
+> `negated_pairs_v2.csv` produirait des comptes faux que V4 attraperait — ou,
+> pire, des comptes cohérents mais faux si l'erreur est symétrique.
+
+### 2.3 `merged_corpus_renal.csv` → `articles.csv`
+
+Le builder lit : `pmid`, `title` (obligatoires), puis `doi`, `abstract`,
+`year`, `journal`, `journal_abbrev`, `country`, `language`, `cited_by`,
+`source`, `graft_assignment` (tolérés absents via `.get()`).
+C'est la correspondance la **moins** problématique des trois, mais `year` est
+requis par la validation **V7** (année présente et plausible).
+
+### 2.4 Fichiers sans correspondance directe
+
+Trois entrées attendues par le builder ne figurent pas dans la liste
+ci-dessus — vérifier d'où elles viennent avant de commencer :
+
+- `hla_entities.csv` (les allèles, avec leur `parent_hla` — V5 vérifie que la
+  hiérarchie résout et reste acyclique) ;
+- `authors.csv` (liaison pmid → auteur ; alimente les fiches auteur) ;
+- `outcomes` — dérivé des libellés, cf. validation V8.
 
 Trois fichiers supplémentaires sont attendus par le builder et **n'ont pas de
 correspondance directe** dans la liste ci-dessus — vérifier d'où ils viennent
@@ -59,10 +143,32 @@ dans le pipeline avant de commencer :
 - `authors.csv` (liaison pmid → auteur)
 - `outcomes` — dérivé des libellés, cf. validation V8 ci-dessous.
 
-**Méthode recommandée :** lancer le builder une première fois sur les données
-réelles et **laisser les validations échouer**. Les messages d'erreur (V1…V8)
-nomment précisément la colonne ou la clé manquante, et constituent la
-spécification la plus fiable de l'étape de transformation à écrire.
+### 2.5 Méthode recommandée
+
+Lancer le builder une première fois sur les données réelles et **laisser les
+validations échouer**. Les messages d'erreur (V1…V8) nomment précisément la
+colonne ou la clé manquante, et constituent la spécification la plus fiable
+de l'étape de transformation à écrire — plus fiable que ce document, qui est
+dérivé de la documentation du pipeline et non d'un run réel.
+
+> ⚠️ Cette méthode sert à **préciser** le travail, pas à le dimensionner.
+> Le manque des champs de §2.1 ne se découvre pas comme un message d'erreur
+> qu'on corrige en une ligne : il se résout en amont, dans le pipeline.
+> Traiter ce document comme l'estimation de charge, et les validations comme
+> la liste de détail.
+
+**Ordre de travail suggéré :**
+
+1. Vérifier le compte de 5 581 lignes (§1).
+2. **Confirmer sur un run réel** si `hla_outcome_pairs_v2.csv` porte
+   réellement ou non `sentence` / `hla_span` / `outcome_span` /
+   `sentence_idx` — ce document se fonde sur le contrat de schéma documenté,
+   qui peut avoir évolué. C'est le point qui décide de l'ampleur du chantier.
+3. Si ces champs manquent : traiter la modification du pipeline **avant**
+   d'écrire quoi que ce soit côté réception.
+4. Écrire la transformation (renommages §2.2 + jointure
+   `negated_pairs_v2.csv`).
+5. Itérer sur les messages de validation.
 
 ---
 
@@ -214,7 +320,12 @@ SELECT hla, COUNT(*) AS n FROM pair_mentions GROUP BY hla ORDER BY n DESC LIMIT 
 ### Checklist finale
 
 - [ ] `wc -l data/processed/merged_corpus_renal.csv` → **5581**
+- [ ] **`sentence` / `hla_span` / `outcome_span` / `sentence_idx` présents dans
+      les paires réelles** — sinon, modification du pipeline requise (§2.1)
+- [ ] `negated_pairs_v2.csv` agrégé et joint pour `n_positive` / `n_negated` (§2.2)
 - [ ] Étape de transformation des colonnes écrite et versionnée
+- [ ] **Tiroir de phrases vérifié à l'écran** : une phrase source s'affiche,
+      les spans HLA et complication sont surlignés
 - [ ] Build réel passé sans `--synthetic`, les 8 validations vertes
 - [ ] `labels.py` et `labels.ts` synchronisés si V8 a révélé de nouveaux outcomes
 - [ ] `CORPUS_DB_PATH` pointe sur `dist/corpus_A_v1.2.sqlite`

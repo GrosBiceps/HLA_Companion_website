@@ -50,6 +50,11 @@ const FORBIDDEN_PHRASES = [
   "entraine",
   "à cause de",
   "responsable de",
+  // Borne par des espaces, JAMAIS la sous-chaine nue : « causales » et
+  // « causale » doivent rester ecrivables, c'est le mot de l'avertissement
+  // epistemique lui-meme. « X cause Y » est en revanche une assertion causale.
+  " cause ",
+  " causent ",
 ];
 
 /** Cles techniques du pipeline : les 21 entrees de OUTCOME_LABELS. */
@@ -159,24 +164,58 @@ describe("garde-fou vocabulaire", () => {
  * On ne construit pas d'analyse de flot de donnees : on interdit le motif
  * syntaxique « retomber sur la cle technique » la ou un libelle est attendu.
  */
+/**
+ * Motif « retomber sur la cle technique » : `?? …outcome` ou `|| …outcome`.
+ *
+ * Volontairement SANS ancrage sur le nom de la variable receveuse. Une
+ * premiere version exigeait que le binding s'appelle `label`/`libelle`, ce
+ * qui laissait passer en silence `const titre = clinical?.label || outcome;`
+ * et la forme inline `{clinical?.label ?? outcome}` (aucun binding nomme).
+ * Le nom de la variable n'est pas ce qui rend le repli dangereux : c'est le
+ * repli lui-meme. On matche donc les deux operateurs, quelle que soit la
+ * cible.
+ *
+ * `[\w.?]*` absorbe un chemin optionnel (`row.`, `entity.`) devant `outcome`.
+ * `[^\n;]*?` reste borne a la ligne et non gourmand, pour que le fragment
+ * rapporte dans le message d'erreur designe l'expression fautive.
+ */
+const FALLBACK_ON_KEY = /(?:\?\?|\|\|)\s*[\w.?]*\boutcome\b/g;
+
 describe("garde-fou interpolation : pas de repli sur la cle technique", () => {
   const files = walk(SRC);
   const rel = (f: string) => relative(process.cwd(), f).replace(/\\/g, "/");
 
-  it("aucun `?? outcome` ne sert de libelle affichable", () => {
+  it("aucun repli `?? outcome` / `|| outcome` ne sert de libelle affichable", () => {
     const offenders: string[] = [];
     for (const f of files) {
-      // queries.ts : `outcomeSpan: row.outcome_span ?? row.outcome` est un
-      // repli LEGITIME et documente — ce span sert d'aiguille de surlignage
-      // dans la phrase source, il n'est jamais rendu comme libelle autonome.
+      // queries.ts : `outcomeSpan: row.outcome_span ?? row.outcome` est le
+      // SEUL repli LEGITIME du depot — ce span sert d'aiguille de surlignage
+      // dans la phrase source (HighlightedSentence), il n'est jamais rendu
+      // comme libelle autonome ; un repli y produit au pire un surlignage
+      // absent. Exclusion unique et documentee.
       if (f.endsWith("queries.ts")) continue;
       const src = stripComments(readFileSync(f, "utf-8"));
-      const re = /\b(?:label|libelle)\b[^\n;]*\?\?\s*[\w.]*\boutcome\b/g;
-      for (const m of src.match(re) ?? []) {
+      for (const m of src.match(FALLBACK_ON_KEY) ?? []) {
         offenders.push(`${rel(f)}: ${m.trim()}`);
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  // Les trois formes que le motif doit attraper. Les deux dernieres
+  // echappaient a la version initiale, ancree sur `label|libelle` et sur `??`.
+  it.each([
+    ["repli ?? nomme", `const label = clinical?.label ?? outcome;`],
+    ["repli || sous un autre nom", `const titre = clinical?.label || outcome;`],
+    ["repli inline sans binding", `<h3>{clinical?.label ?? outcome}</h3>`],
+    ["repli sur un chemin", `const l = o?.label ?? row.outcome;`],
+  ])("attrape le %s", (_nom, src) => {
+    expect(src.match(FALLBACK_ON_KEY)).not.toBeNull();
+  });
+
+  it("n'attrape pas une lecture ordinaire de la cle", () => {
+    expect(`const key = row.outcome;`.match(FALLBACK_ON_KEY)).toBeNull();
+    expect(`getOutcome(outcome)`.match(FALLBACK_ON_KEY)).toBeNull();
   });
 });
 

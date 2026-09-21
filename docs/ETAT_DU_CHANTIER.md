@@ -5,7 +5,7 @@ les décisions prises en cours de route.
 
 ---
 
-## Avancement : 8 tâches terminées et relues sur 10, 1 écrite en attente de revue
+## Avancement : 10 tâches sur 10 écrites ; tâche 9 en attente de revue
 
 | # | Tâche | État | Tests |
 |---|---|---|---|
@@ -18,10 +18,16 @@ les décisions prises en cours de route.
 | 7 | Tiroir de phrases | ✅ relu, zéro finding | 47 |
 | 8 | Fiches complication / article / auteur | ✅ relu *(1 correctif)* | 74 |
 | 9 | **Explorateur de graphe** | ⚠️ **code écrit, commit `c15c6c3`, REVUE INTERROMPUE** | 96 |
-| 10 | Garde-fous + doc de bascule | ⬜ à faire | — |
+| 10 | Garde-fous + doc de bascule | ✅ relu *(1 correctif : fuite de clé technique)* | 109 |
 
-**Vérifié au 21/09** : 96 tests passent, `tsc --noEmit` propre, `npm run build`
-réussit, aucun serveur de dev orphelin.
+**Vérifié au 21/09** : 109 tests TS + 48 tests Python passent, `tsc --noEmit`
+propre, `npm run build` réussit, aucun serveur de dev orphelin.
+
+La tâche 10 a trouvé et corrigé une fuite réelle : `article/[pmid]/page.tsx`
+retombait sur la clé technique brute (`graft_loss`…) comme libellé affiché dès
+que `getOutcome()` rendait `null`. Voir `docs/BASCULE_DONNEES_REELLES.md` pour
+la procédure de bascule, dont le chantier de transformation des CSV (des champs
+de phrase manquent aux sorties documentées du pipeline).
 
 ## ⚠️ La tâche 9 n'a pas terminé sa revue
 

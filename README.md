@@ -29,10 +29,11 @@ chef du laboratoire HLA avant passage à l'échelle.
 | Élément | État |
 |---|---|
 | Document de conception | ✅ [docs/specs](docs/specs/2026-09-16-compagnon-hla-design.md) |
-| Schéma SQLite + builder | 🔜 |
-| Données synthétiques de développement | 🔜 |
-| Interface Next.js | 🔜 |
-| Bascule vers les données réelles | 🔜 |
+| Schéma SQLite + builder | ✅ [scripts/build_sqlite.py](scripts/build_sqlite.py) — 8 validations |
+| Données synthétiques de développement | ✅ [scripts/gen_synthetic.py](scripts/gen_synthetic.py) |
+| Interface Next.js | ✅ allèle, complication, article, auteur, graphe, recherche |
+| Garde-fous automatisés | ✅ routes + vocabulaire (`src/__tests__/`) |
+| Bascule vers les données réelles | 🔜 [procédure documentée](docs/BASCULE_DONNEES_REELLES.md) |
 
 ---
 
@@ -127,6 +128,9 @@ commande.
 
 - [Document de conception complet](docs/specs/2026-09-16-compagnon-hla-design.md)
   — modèle de données, prototypes UI, décisions et justifications.
+- [Bascule vers les données réelles](docs/BASCULE_DONNEES_REELLES.md)
+  — repère de vérification, correspondance des CSV, retrait du bandeau
+  synthétique, checklist de re-vérification.
 
 ---
 

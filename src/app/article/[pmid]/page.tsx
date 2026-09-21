@@ -190,8 +190,16 @@ export default async function ArticlePage({ params }: Params) {
 
             {pairs.map(({ hla, outcome, rows }) => {
               // Le libelle clinique vient de la base, jamais la cle.
+              //
+              // `getOutcome` peut rendre null si `pair_mentions` reference une
+              // complication absente de la table `outcomes` (derive de schema :
+              // scenario realiste lors de la bascule vers les donnees reelles).
+              // On affiche alors un libelle neutre plutot que la cle technique
+              // brute (`graft_loss`...), qui violerait la regle d'affichage de
+              // la spec §6. On ne 404 pas l'article entier pour une seule
+              // complication inconnue : le reste des mentions reste utile.
               const clinical = getOutcome(outcome);
-              const label = clinical?.label ?? outcome;
+              const label = clinical?.label ?? "Complication non libellée";
               return (
                 <div
                   key={`${hla}:${outcome}`}

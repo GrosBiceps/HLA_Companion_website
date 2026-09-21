@@ -1,3 +1,7 @@
+"use client";
+
+import { useState } from "react";
+import { SentenceDrawer } from "@/components/SentenceDrawer";
 import { SignalIndicator } from "@/components/SignalIndicator";
 import type { AssociationRow } from "@/lib/types";
 
@@ -49,7 +53,11 @@ export function AssociationCard({
 }: {
   association: AssociationRow;
 }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
   const {
+    hla,
+    outcome,
     label,
     nCooccurrence,
     nNegated,
@@ -122,17 +130,31 @@ export function AssociationCard({
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-4">
+        {/*
+          LE CHEMIN DE VERIFICATION. Ce bouton est ce qui fait du compte
+          ci-dessus une quantite verifiable plutot qu'une affirmation : il
+          ouvre les phrases sources qui l'ont produit. Le libelle clinique est
+          transmis tel quel au tiroir — celui-ci ne le re-derive pas, pour
+          qu'il n'existe qu'une seule source de verite par libelle.
+        */}
         <button
           type="button"
-          disabled
-          title="Disponible prochainement"
-          aria-label="Disponible prochainement"
-          className="text-sm font-medium text-slate-400 underline
-                     underline-offset-2 cursor-not-allowed"
+          onClick={() => setDrawerOpen(true)}
+          className="text-sm font-medium text-slate-900 underline
+                     underline-offset-2 hover:text-slate-600"
         >
           {`Voir le${nCooccurrence > 1 ? "s" : ""} ${nCooccurrence} phrase${nCooccurrence > 1 ? "s" : ""}`}
         </button>
       </div>
+
+      {drawerOpen ? (
+        <SentenceDrawer
+          hla={hla}
+          outcome={outcome}
+          label={label}
+          onClose={() => setDrawerOpen(false)}
+        />
+      ) : null}
 
       {/*
         Repli ferme par defaut : le lecteur rencontre d'abord un effectif

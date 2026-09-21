@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { SignalIndicator } from "@/components/SignalIndicator";
 import type { AssociationRow } from "@/lib/types";
 
@@ -51,8 +50,6 @@ export function AssociationCard({
   association: AssociationRow;
 }) {
   const {
-    hla,
-    outcome,
     label,
     nCooccurrence,
     nNegated,
@@ -68,7 +65,6 @@ export function AssociationCard({
   } = association;
 
   const muted = !isSignificant;
-  const sentencesHref = `/paire/${encodeURIComponent(hla)}/${encodeURIComponent(outcome)}`;
 
   return (
     <article
@@ -91,7 +87,7 @@ export function AssociationCard({
       <p
         className={`mt-2 text-sm ${muted ? "text-slate-500" : "text-slate-800"}`}
       >
-        <strong className="font-semibold">{`${nCooccurrence} articles`}</strong>{" "}
+        <strong className="font-semibold">{`${nCooccurrence} article${nCooccurrence > 1 ? "s" : ""}`}</strong>{" "}
         co-mentionnent cet allèle et cette complication
         {firstYear !== null ? ` (depuis ${firstYear})` : ""}.
       </p>
@@ -126,13 +122,16 @@ export function AssociationCard({
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-4">
-        <Link
-          href={sentencesHref}
-          className="text-sm font-medium text-slate-900 underline
-                     underline-offset-2 hover:text-slate-600"
+        <button
+          type="button"
+          disabled
+          title="Disponible prochainement"
+          aria-label="Disponible prochainement"
+          className="text-sm font-medium text-slate-400 underline
+                     underline-offset-2 cursor-not-allowed"
         >
-          {`Voir les ${nCooccurrence} phrases`}
-        </Link>
+          {`Voir le${nCooccurrence > 1 ? "s" : ""} ${nCooccurrence} phrase${nCooccurrence > 1 ? "s" : ""}`}
+        </button>
       </div>
 
       {/*

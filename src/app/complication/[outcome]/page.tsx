@@ -10,7 +10,7 @@ import type { AssociationRow, SignalLevel } from "@/lib/types";
  * Fiche complication — NAVIGATION INVERSE de la fiche allele.
  *
  * LIBELLE CLINIQUE, JAMAIS LA CLE. L'URL porte la cle technique
- * (`/outcome/graft_loss`) parce qu'elle doit etre stable ; l'ECRAN ne la
+ * (`/complication/graft_loss`) parce qu'elle doit etre stable ; l'ECRAN ne la
  * montre nulle part. L'entete affiche « Perte du greffon », le <title> aussi.
  * Une cle affichee donnerait au chiffre l'autorite d'une sortie de machine.
  *

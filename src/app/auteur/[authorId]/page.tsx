@@ -178,7 +178,7 @@ export default async function AuthorPage({ params }: Params) {
                   {topOutcomes.map(({ entity, nArticles }) => (
                     <li key={entity.outcome} className="text-sm">
                       <Link
-                        href={`/outcome/${encodeURIComponent(entity.outcome)}`}
+                        href={`/complication/${encodeURIComponent(entity.outcome)}`}
                         className="text-slate-900 underline underline-offset-2
                                    hover:text-slate-600"
                       >
@@ -237,7 +237,7 @@ export default async function AuthorPage({ params }: Params) {
             {coAuthors.map((co) => (
               <li key={co.authorId}>
                 <Link
-                  href={`/author/${encodeURIComponent(co.authorId)}`}
+                  href={`/auteur/${encodeURIComponent(co.authorId)}`}
                   className="inline-block rounded border border-slate-300
                              bg-white px-3 py-1 text-sm text-slate-900
                              hover:border-slate-800 hover:bg-slate-50"

@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import AuthorPage, {
   HOMONYM_RESERVATION,
-} from "../app/author/[authorId]/page";
-import OutcomePage from "../app/outcome/[outcome]/page";
+} from "../app/auteur/[authorId]/page";
+import OutcomePage from "../app/complication/[outcome]/page";
 import ArticlePage from "../app/article/[pmid]/page";
 import { getDb } from "../lib/db";
 import { OUTCOME_LABELS } from "../lib/labels";

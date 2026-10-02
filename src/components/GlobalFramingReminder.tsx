@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Info } from "lucide-react";
 
 /**
  * Rappel de cadrage GLOBAL — une ligne, sur toutes les routes.
@@ -22,7 +23,7 @@ import Link from "next/link";
  * meme rang visuel que la version du corpus), puis l'encart (le propos). La
  * ligne ne redit pas les phrases de l'encart — elle pose le vocabulaire
  * (« co-occurrences textuelles », « pas des associations cliniques ») que
- * l'encart developpe ensuite. Elle est en tete de <body>, hors du <main>, donc
+ * l'encart developpe ensuite. Elle est hors du <main>, sous l'en-tete, donc
  * lue comme un attribut du site et non comme un paragraphe de la page.
  *
  * VOCABULAIRE. Aucun terme causal : la ligne qui refute la lecture causale ne
@@ -31,16 +32,19 @@ import Link from "next/link";
  */
 export function GlobalFramingReminder() {
   return (
-    <div className="border-b border-slate-200 bg-slate-50">
-      <p className="mx-auto max-w-5xl px-4 py-1.5 text-xs text-slate-600">
-        Co-occurrences textuelles dans la littérature indexée — pas des
-        associations cliniques.{" "}
-        <Link
-          href="/methodologie"
-          className="underline underline-offset-2 hover:text-slate-900"
-        >
-          En savoir plus
-        </Link>
+    <div className="border-b border-line bg-surface-muted/70">
+      <p className="mx-auto flex max-w-content items-center gap-2 px-4 py-1.5 text-xs text-fg-muted sm:px-6 lg:px-8">
+        <Info aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-fg-subtle" />
+        <span>
+          Co-occurrences textuelles dans la littérature indexée — pas des
+          associations cliniques.{" "}
+          <Link
+            href="/methode"
+            className="font-medium text-fg underline decoration-fg/25 underline-offset-2 hover:decoration-fg"
+          >
+            En savoir plus
+          </Link>
+        </span>
       </p>
     </div>
   );

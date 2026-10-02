@@ -117,7 +117,7 @@ OUTCOME_LABELS = {
     "hsct_graft_rejection": ("Rejet de greffe de CSH", "Rejet"),
     "HLA_loss_relapse": ("Perte d'HLA à la rechute", "Immunisation"),
     "secondary_malignancy": ("Seconde néoplasie", "Neoplasie"),
-    "non_relapse_mortality": ("Mortalité non liée à la rechute", "Survie"),
+    "non_relapse_mortality": ("Mortalité hors rechute", "Survie"),
 }
 
 # Organes auxquels chaque complication s'applique. Une complication

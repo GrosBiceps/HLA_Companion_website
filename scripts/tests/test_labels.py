@@ -111,7 +111,7 @@ class TestOrganVocabulary(unittest.TestCase):
             self.assertEqual(set(OUTCOME_ORGANS[key]), set(ORGAN_KEYS), key)
 
     def test_labels_never_use_causal_wording(self):
-        causal = ("associé à", "lié à", "risque de", "provoque", "entraîne")
+        causal = ("associé à", "associée à", "lié à", "liée à", "liés à", "risque de", "provoque", "entraîne", "prédit", "responsable de")
         for key, (label, _) in OUTCOME_LABELS.items():
             for term in causal:
                 self.assertNotIn(term, label.lower(), key)

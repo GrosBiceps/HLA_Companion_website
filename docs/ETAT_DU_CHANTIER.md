@@ -5,6 +5,54 @@ les décisions prises en cours de route.
 
 ---
 
+## Jeu synthétique élargi (02/10/2026)
+
+Le générateur (`scripts/gen_synthetic.py`) produit désormais par défaut un
+corpus **toujours fictif** (`is_synthetic = 1`, bandeau maintenu) mais
+nettement plus riche, pour développer les visualisations sur un paysage
+crédible :
+
+| Élément | Avant | Maintenant (seed 42) |
+|---|---|---|
+| Articles | 400 | **3 000** (1990–2026, croissance ~7 %/an) |
+| Auteurs distincts | 42 | **2 611** (215 avec ≥ 15 publications, max 63 ; 449 auteurs à 1 article) |
+| Revues / pays | 5 / 10 | **25 / 20** |
+| Entités HLA | 46 | **154** : 47 allèles 2-digit, 97 allèles 4-digit, 6 loci, 2 classes, `HLA-mismatch`, `HLA-eplet` |
+| Complications présentes | 19 | **21 / 21** (les 7 catégories) |
+| Phrases sources (`pair_mentions`) | 862 | **15 522** |
+| Associations | 127 | **2 365** — strong 80 · clear 52 · moderate 12 · inverse 13 · weak 2 208 |
+| Base SQLite | ~1 Mo | **13,9 Mo** (génération + build < 2 s) |
+
+Le vocabulaire 2-digit s'inspire de la carte v1 réelle
+(`data/legacy/carte_v1_renal.json`). Le modèle génératif a changé : un article
+cite un *ensemble* d'allèles et de complications et émet une mention pour
+chaque paire du produit cartésien, ce qui rend la table de contingence
+cohérente (l'ancien modèle déprimait mécaniquement tous les NPMI). Les signaux
+planifiés passent par une co-citation conditionnelle ; les niveaux `moderate`
+et une partie des `clear` viennent d'allèles rares cités par 2 à 6 articles.
+Les popularités varient avec les années (eplets, DSA, ABMR en hausse ; rejet
+aigu en baisse), d'où quelques associations de « mode de publication ». Les
+noms d'auteurs sont des patronymes courants + initiales tirées au hasard :
+aucun article fictif n'est attribué à un chercheur réel identifiable.
+
+**Performance** (mesurée sous Vitest sur la base de 3 000 articles) : voisinage
+de graphe 0,3 ms (profondeur 1) à 18 ms (profondeur 3), recherche FTS < 2 ms,
+fiches allèle / complication / auteur < 1 ms, `getAssociationMatrix` 2 ms.
+Aucun index supplémentaire n'a été jugé nécessaire.
+
+**Nouvelles requêtes pour les visualisations** (`src/lib/queries.ts`, testées
+dans `src/__tests__/overview-queries.test.ts`) : `getAssociationMatrix()`
+(matrice creuse HLA 2-digit × complication), `getPublicationsByYear()` et
+`getCorpusStats()` étendu (auteurs, revues, pays, associations par niveau de
+signal, allèles par résolution).
+
+⚠ Le voisinage de graphe **dépasse désormais le plafond de 150 nœuds** dès la
+profondeur 2 (≈ 170 nœuds atteignables) : la troncature par force de signal
+est exercée en conditions réelles, et l'interface doit afficher son
+avertissement de troncature.
+
+---
+
 ## Avancement : 10 tâches sur 10 écrites ; tâche 9 en attente de revue
 
 | # | Tâche | État | Tests |
@@ -43,7 +91,8 @@ lui-même, à confirmer par un relecteur indépendant) :
 - **Sigma.js et graphology ne sont pas installés** (vérifié : absents de
   `package.json`), alors que la spec les recommandait. L'implémenteur a
   substitué un rendu SVG en anneaux concentriques, en faisant valoir qu'aucune
-  dépendance lourde n'est justifiée pour un corpus qui plafonne à 54 nœuds
+  dépendance lourde n'est justifiée pour un corpus qui plafonnait à 54 nœuds
+  (ce n'est plus vrai depuis le jeu élargi : ≈ 170 nœuds atteignables)
   atteignables (sur les 150 permis). À juger : le rendu est-il réellement
   utilisable (lisibilité, distinction HLA/complication, style des arêtes) ?
 - Le plafond de 150 nœuds ne peut pas être atteint par le corpus réel — la
@@ -121,11 +170,12 @@ les deux fichiers concordent 21/21).
 **`src/lib/queries.ts` étendu par ajout pur**, jamais réécrit, par les tâches
 successives. *Coût si erroné* : un conflit d'édition, détecté par les tests.
 
-**La table `outcomes` ne contient que les 19 complications présentes dans le
-corpus**, pas les 21 du référentiel. Cohérent avec « tout agrégat est dérivable
-des extractions » : une complication jamais mentionnée n'a pas de ligne.
-*Coût si erroné* : la page « Explorer par complication » listera 19 entrées au
-lieu de 21. Rattrapable en une requête.
+**La table `outcomes` ne contient que les complications présentes dans le
+corpus**, pas nécessairement les 21 du référentiel (19 dans l'ancien jeu de
+400 articles ; les 21 dans le jeu élargi). Cohérent avec « tout agrégat est
+dérivable des extractions » : une complication jamais mentionnée n'a pas de
+ligne. *Coût si erroné* : sur un corpus réel incomplet, la page « Explorer par
+complication » listera moins de 21 entrées. Rattrapable en une requête.
 
 **La validation V1 reste tautologique** (elle compare `len(articles)` à
 lui-même). Un compte déclaré n'a de sens que face à une source indépendante —
@@ -155,12 +205,15 @@ déjà `SyntheticBanner` globalement.
   l'échappatoire « relire les sources » de l'encart de cadrage, et l'affaiblir
   pour une raison de calendrier coûterait plus que le lien mort. Une page
   d'erreur stylée coûterait peu.
-- Le bloc `CONTRAT STATISTIQUE` de `gen_synthetic.py` surestime la
-  reconstructibilité : `pval_two_sided` est censuré à 1.0 sous `INVERSE_MIN_N`
-  (16 lignes sur 127). Scoper la garantie à `npmi` / `odds_ratio` /
-  `pval_fisher`.
-- Le générateur change de régime à `n_articles == 300` (29 signaux inverses sur
-  170 à n=299, contre 3 sur 129 à n=300). Non documenté en magnitude.
+- ~~Le bloc `CONTRAT STATISTIQUE` surestime la reconstructibilité~~ : la
+  garantie est désormais scopée à `npmi` / `odds_ratio` / `pval_fisher`, avec
+  l'exception de censure de `pval_two_sided` documentée.
+- Le générateur a trois régimes de taille, documentés dans sa docstring :
+  < 300 articles (2 paires inverses portées par des « porteurs » fréquents,
+  pour les tests), ≥ 300 (12 paires inverses planifiées), ≥ 1 500 (allèles
+  rares des niveaux `moderate` / `clear`). Seed 42 : 2 inverses à n=299,
+  aucun à n=300 (le test bilatéral manque encore de puissance), 3 à n=1 000,
+  13 à n=3 000.
 - Les échecs en phase d'écriture du builder lèvent `IntegrityError`, non
   attrapée par le CLI → traceback au lieu du message « Aucun fichier produit ».
   Cosmétique, l'atomicité est intacte.

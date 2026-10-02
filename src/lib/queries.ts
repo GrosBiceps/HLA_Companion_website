@@ -10,15 +10,21 @@
  */
 
 import { getDb } from "./db";
+import { CATEGORIES } from "./labels";
 import type {
   Article,
+  AssociationMatrix,
+  AssociationMatrixCell,
   AssociationRow,
   Author,
   EntityType,
   HlaEntity,
   Outcome,
+  MatrixAllele,
+  MatrixOutcome,
   PairMention,
   Polarity,
+  PublicationsPerYear,
   SearchHit,
   SignalLevel,
 } from "./types";
@@ -314,9 +320,25 @@ export function getAuthor(authorId: string): Author | null {
 export interface CorpusStats {
   nArticles: number;
   nOutcomes: number;
+  /** Toutes les entites HLA, noeuds de hierarchie compris (classe, locus). */
   nAlleles: number;
   yearMin: number | null;
   yearMax: number | null;
+  /** Alleles de resolution 2-digit (« HLA-A*02 »). */
+  nAlleles2Digit: number;
+  /** Alleles de resolution 4-digit (« HLA-A*02:01 »). */
+  nAlleles4Digit: number;
+  /** Entites HLA par resolution (`2-digit`, `4-digit`, `class`, ...). */
+  allelesByResolution: Record<string, number>;
+  nAuthors: number;
+  nJournals: number;
+  nCountries: number;
+  /** Phrases sources (mentions de paire) indexees. */
+  nPairMentions: number;
+  /** Paires (allele, complication) co-citees au moins une fois. */
+  nAssociations: number;
+  /** Associations par niveau de signal ; les 5 niveaux sont toujours presents. */
+  associationsBySignal: Record<SignalLevel, number>;
 }
 
 /**
@@ -349,12 +371,66 @@ export function getCorpusStats(): CorpusStats {
     .prepare(`SELECT COUNT(*) AS n FROM hla_entities`)
     .get() as { n: number };
 
+  // Extension (vues d'ensemble) : memes principes, tout est compte dans la
+  // base rendue, rien n'est declare.
+  const allelesByResolution: Record<string, number> = {};
+  for (const row of db
+    .prepare(
+      `SELECT resolution, COUNT(*) AS n FROM hla_entities
+        GROUP BY resolution ORDER BY resolution`,
+    )
+    .all() as { resolution: string; n: number }[]) {
+    allelesByResolution[row.resolution] = row.n;
+  }
+
+  const sources = db
+    .prepare(
+      `SELECT COUNT(DISTINCT journal) AS n_journals,
+              COUNT(DISTINCT country) AS n_countries
+         FROM articles`,
+    )
+    .get() as { n_journals: number; n_countries: number };
+
+  const authors = db
+    .prepare(`SELECT COUNT(*) AS n FROM authors`)
+    .get() as { n: number };
+
+  const mentions = db
+    .prepare(`SELECT COUNT(*) AS n FROM pair_mentions`)
+    .get() as { n: number };
+
+  const associationsBySignal: Record<SignalLevel, number> = {
+    inverse: 0,
+    strong: 0,
+    clear: 0,
+    moderate: 0,
+    weak: 0,
+  };
+  let nAssociations = 0;
+  for (const row of db
+    .prepare(
+      `SELECT signal_level, COUNT(*) AS n FROM associations GROUP BY signal_level`,
+    )
+    .all() as { signal_level: SignalLevel; n: number }[]) {
+    associationsBySignal[row.signal_level] = row.n;
+    nAssociations += row.n;
+  }
+
   return {
     nArticles: articles.n,
     nOutcomes: outcomes.n,
     nAlleles: alleles.n,
     yearMin: articles.year_min,
     yearMax: articles.year_max,
+    nAlleles2Digit: allelesByResolution["2-digit"] ?? 0,
+    nAlleles4Digit: allelesByResolution["4-digit"] ?? 0,
+    allelesByResolution,
+    nAuthors: authors.n,
+    nJournals: sources.n_journals,
+    nCountries: sources.n_countries,
+    nPairMentions: mentions.n,
+    nAssociations,
+    associationsBySignal,
   };
 }
 
@@ -738,10 +814,11 @@ export interface Neighborhood {
  * « hairball » : au-dela de quelques dizaines de noeuds un graphe de
  * co-occurrence ne se lit plus, il se contemple. 150 est la limite retenue.
  *
- * Le corpus A synthetique sature a 54 noeuds a profondeur 5 : le plafond n'y
- * est jamais atteint. Il est neanmoins implemente et teste (cf.
+ * Le corpus synthetique elargi (3 000 articles, ~170 noeuds atteignables)
+ * DEPASSE le plafond des la profondeur 2 : la troncature y est donc exercee
+ * en conditions reelles. Elle reste testee directement (cf.
  * `truncateBySignal`, exportee pour ca) parce que c'est une garantie sur le
- * comportement du code, pas sur ce corpus-ci.
+ * comportement du code, pas sur un corpus particulier.
  */
 export const GRAPH_NODE_CAP = 150;
 
@@ -823,8 +900,8 @@ function resolveCenter(centerId: string): GraphNode | null {
 /**
  * Tronque un ensemble de noeuds au plafond, PAR FORCE DE SIGNAL DECROISSANTE.
  *
- * Exportee pour etre testable directement : le corpus A ne permet pas
- * d'atteindre 150 noeuds, la garantie serait donc sinon invérifiable.
+ * Exportee pour etre testable directement, independamment de la taille du
+ * corpus rendu.
  *
  * Regles de coupe, dans l'ordre :
  *  1. le centre (distance 0) n'est jamais coupe ;
@@ -1053,4 +1130,141 @@ export function getDefaultGraphCenter(): string | null {
     )
     .get() as { hla: string } | undefined;
   return row?.hla ?? null;
+}
+
+// --------------------------------------------------------------------------
+// Vues d'ensemble pour les visualisations : matrice, chronologie, compteurs.
+//
+// AJOUT PUR, meme regle que les taches precedentes. Ces fonctions servent des
+// vues globales (heatmap, histogramme) : elles lisent des tables deja
+// agregees par le builder et restent bon marche (quelques ms sur le corpus
+// synthetique de 3 000 articles).
+// --------------------------------------------------------------------------
+
+/** Ordre des loci dans la matrice : classe I puis classe II. */
+const LOCUS_ORDER = ["A", "B", "C", "DRB1", "DQB1", "DPB1"];
+
+/**
+ * Matrice HLA x complication au niveau de resolution demande (2-digit par
+ * defaut), pour une heatmap ou une vue en grille.
+ *
+ * - `alleles` : TOUTES les entites de la resolution, meme sans association
+ *   (une ligne vide est une information : l'allele n'est jamais co-cite) ;
+ * - `outcomes` : toutes les complications de la table `outcomes`, dans
+ *   l'ordre clinique `CATEGORIES`, libelle clinique joint ;
+ * - `cells` : matrice CREUSE, une case par ligne de `associations`. Rien
+ *   n'est filtre (le non significatif et les negations y sont), conformement
+ *   aux regles du projet.
+ *
+ * `npmi` est fourni pour l'encodage visuel ; l'interface ne doit pas
+ * l'afficher en clair par defaut (cf. regle epistemique).
+ */
+export function getAssociationMatrix(
+  resolution: "2-digit" | "4-digit" = "2-digit",
+): AssociationMatrix {
+  const db = getDb();
+
+  const locusCase = `CASE h.locus ${LOCUS_ORDER.map(
+    (l, i) => `WHEN '${l}' THEN ${i}`,
+  ).join(" ")} ELSE ${LOCUS_ORDER.length} END`;
+  const categoryCase = `CASE o.category ${CATEGORIES.map(
+    (c, i) => `WHEN '${c}' THEN ${i}`,
+  ).join(" ")} ELSE ${CATEGORIES.length} END`;
+
+  const alleles = (
+    db
+      .prepare(
+        `SELECT h.hla, h.locus, h.hla_class, h.n_mentions
+           FROM hla_entities h
+          WHERE h.resolution = ?
+          ORDER BY h.hla_class ASC, ${locusCase}, h.hla ASC`,
+      )
+      .all(resolution) as {
+      hla: string;
+      locus: string;
+      hla_class: string;
+      n_mentions: number;
+    }[]
+  ).map(
+    (row): MatrixAllele => ({
+      hla: row.hla,
+      locus: row.locus,
+      hlaClass: row.hla_class,
+      nMentions: row.n_mentions,
+    }),
+  );
+
+  const outcomes = (
+    db
+      .prepare(
+        `SELECT o.outcome, o.label, o.category, o.n_mentions
+           FROM outcomes o
+          ORDER BY ${categoryCase}, o.label ASC`,
+      )
+      .all() as OutcomeSqlRow[]
+  ).map(
+    (row): MatrixOutcome => ({
+      outcome: row.outcome,
+      label: row.label,
+      category: row.category,
+      nMentions: row.n_mentions,
+    }),
+  );
+
+  const cells = (
+    db
+      .prepare(
+        `SELECT a.hla, a.outcome, a.signal_level, a.is_significant,
+                a.n_cooccurrence, a.n_negated, a.npmi
+           FROM associations a
+           JOIN hla_entities h ON h.hla = a.hla
+          WHERE h.resolution = ?
+          ORDER BY a.hla ASC, a.outcome ASC`,
+      )
+      .all(resolution) as {
+      hla: string;
+      outcome: string;
+      signal_level: SignalLevel;
+      is_significant: number;
+      n_cooccurrence: number;
+      n_negated: number;
+      npmi: number | null;
+    }[]
+  ).map(
+    (row): AssociationMatrixCell => ({
+      hla: row.hla,
+      outcome: row.outcome,
+      signalLevel: row.signal_level,
+      isSignificant: row.is_significant === 1,
+      nCooccurrence: row.n_cooccurrence,
+      nNegated: row.n_negated,
+      npmi: row.npmi,
+    }),
+  );
+
+  return { resolution, alleles, outcomes, cells };
+}
+
+/**
+ * Nombre d'articles par annee de publication, en ordre croissant, SANS TROU :
+ * une annee sans article entre la premiere et la derniere vaut 0 (un
+ * histogramme ne doit pas sauter d'annee silencieusement).
+ *
+ * Compte depuis `articles` (contenu reellement present), comme
+ * `getCorpusStats`, plutot que depuis une valeur declaree.
+ */
+export function getPublicationsByYear(): PublicationsPerYear[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT year, COUNT(*) AS n FROM articles GROUP BY year ORDER BY year`,
+    )
+    .all() as { year: number; n: number }[];
+  if (rows.length === 0) return [];
+
+  const byYear = new Map(rows.map((r) => [r.year, r.n]));
+  const out: PublicationsPerYear[] = [];
+  for (let y = rows[0].year; y <= rows[rows.length - 1].year; y++) {
+    out.push({ year: y, nArticles: byYear.get(y) ?? 0 });
+  }
+  return out;
 }

@@ -113,7 +113,7 @@ from labels import OUTCOME_LABELS
 YEAR_MIN = 1990
 YEAR_MAX = 2026
 
-DEFAULT_N_ARTICLES = 3000
+DEFAULT_N_ARTICLES = 4000
 
 # Sous ce seuil, regime « petit corpus » (cf. docstring du module).
 SMALL_CORPUS = 300
@@ -344,6 +344,9 @@ CONTESTED_NEGATED_RATE = 0.6
 # le badge "signal inverse" via labels.compute_signal_level.
 INVERSE_MIN_N = 5
 
+# Plancher de co-occurrence pour entrer dans la famille de tests FDR.
+MIN_TEST_COOCCURRENCE = 2
+
 # Plancher numerique des p-values : math.exp sous-deborde a 0.0 sur les tables
 # tres deseequilibrees, et un -log10(p) en aval produirait alors +inf.
 MIN_PVALUE = 1e-300
@@ -353,77 +356,13 @@ MIN_PVALUE = 1e-300
 # =====================================================================
 
 CLASS_ROOTS = [("HLA-class-I", "I"), ("HLA-class-II", "II")]
-LOCI = [
-    ("A", "I"), ("B", "I"), ("C", "I"),
-    ("DRB1", "II"), ("DQB1", "II"), ("DPB1", "II"),
-]
-
-# Vocabulaire 2-digit inspire de la carte v1 reelle
-# (data/legacy/carte_v1_renal.json), complete des groupes alleliques les plus
-# frequents en transplantation. {groupe: (popularite relative, [enfants 4-digit])}
-# La popularite fixe la frequence de citation ; le premier enfant 4-digit
-# herite de la plus grande part.
-ALLELE_GROUPS = {
-    "A": {
-        "01": (0.60, ["01"]),
-        "02": (1.00, ["01", "02", "03", "05", "06", "07", "11", "17"]),
-        "03": (0.50, ["01", "02"]),
-        "11": (0.40, ["01", "02", "03"]),
-        "23": (0.20, ["01"]),
-        "24": (0.50, ["02", "07", "03"]),
-        "25": (0.15, ["01", "14"]),
-        "26": (0.20, ["01"]),
-        "29": (0.20, ["02"]),
-        "30": (0.20, ["01", "02"]),
-        "31": (0.20, ["01"]),
-        "33": (0.25, ["01", "03"]),
-        "68": (0.25, ["01", "02", "03"]),
-    },
-    "B": {
-        "07": (0.50, ["02", "05"]),
-        "08": (0.55, ["01"]),
-        "13": (0.20, ["02"]),
-        "15": (0.40, ["01", "02", "11", "17"]),
-        "18": (0.25, ["01"]),
-        "27": (0.40, ["05", "02", "04"]),
-        "35": (0.45, ["01", "03", "08", "05"]),
-        "39": (0.20, ["01"]),
-        "40": (0.25, ["01", "02"]),
-        "44": (0.50, ["02", "03", "05"]),
-        "46": (0.20, ["01"]),
-        "51": (0.40, ["01", "08"]),
-        "55": (0.15, ["01"]),
-        "57": (0.30, ["01"]),
-        "58": (0.30, ["01"]),
-    },
-    "C": {
-        "03": (0.30, ["03", "04"]),
-        "04": (0.30, ["01"]),
-        "06": (0.25, ["02"]),
-        "07": (0.35, ["01", "02", "04"]),
-        "14": (0.15, ["02"]),
-        "17": (0.15, ["01"]),
-    },
-    "DRB1": {
-        "01": (0.40, ["01", "02"]),
-        "03": (0.65, ["01", "02"]),
-        "04": (0.60, ["01", "04", "05"]),
-        "07": (0.45, ["01"]),
-        "11": (0.50, ["01", "04", "03"]),
-        "13": (0.45, ["01", "02", "03"]),
-        "15": (0.70, ["01", "02"]),
-    },
-    "DQB1": {
-        "02": (0.80, ["01", "02"]),
-        "03": (0.60, ["01", "02", "03"]),
-        "05": (0.40, ["01", "02", "03"]),
-        "06": (0.55, ["02", "03", "09"]),
-    },
-    "DPB1": {
-        "01": (0.25, ["01"]),
-        "04": (0.45, ["01", "02"]),
-    },
-}
+CLASS_ROOTS_IDS = CLASS_ROOTS
+# Vocabulaire allelique (loci, groupes 2-digit, enfants 4-digit, popularites) :
+# cf. hla_vocabulary.py. Il est volontairement plus large que ce que le corpus
+# finit par citer : les alleles jamais mentionnes sont elagues apres la
+# generation (cf. `_prune_unmentioned`), ce qui laisse une longue traine
+# d'alleles cites 1 a 5 fois.
+from hla_vocabulary import ALLELE_GROUPS, LOCI  # noqa: E402
 
 # Entites non alleliques citees par le pipeline.
 SPECIAL_ENTITIES = [
@@ -489,6 +428,29 @@ def build_hla_entities():
         })
 
     return rows
+
+
+def _prune_unmentioned(hla_rows, mentioned):
+    """Elague les alleles que le corpus genere n'a jamais cites.
+
+    Le vocabulaire candidat est large (cf. hla_vocabulary.py) ; un allele cite
+    par aucun article n'existerait pas dans une sortie reelle du pipeline
+    (qui n'extrait que ce qui est ecrit). On garde : les entites mentionnees,
+    les ancetres d'une entite gardee (la hierarchie reste connexe), et les
+    entites non alleliques. Les racines de classe sont toujours gardees.
+    """
+    by_id = {r["hla"]: r for r in hla_rows}
+    keep = set()
+    for r in hla_rows:
+        if r["hla"] in mentioned or r["resolution"] in (
+            "mismatch_count", "eplet",
+        ):
+            node = r["hla"]
+            while node and node not in keep:
+                keep.add(node)
+                node = by_id[node]["parent_hla"]
+    keep.update(h for h, _ in CLASS_ROOTS_IDS)
+    return [r for r in hla_rows if r["hla"] in keep]
 
 
 def _hla_popularity():
@@ -632,6 +594,10 @@ CLEAR_PAIRS = [
 # tirees au hasard (a seed fixee) recoivent une co-citation modeste : la
 # litterature reelle compte bien plus de signaux modestes que de vedettes.
 RANDOM_CLEAR_PAIRS = 160
+
+# Les paires modestes tirees au hasard ne portent que sur des alleles assez
+# cites pour que la co-citation soit observable (pas sur la longue traine).
+RANDOM_CLEAR_MIN_POP = 0.03
 
 # Paires vitrine a signal faible : l'UI doit pouvoir montrer un "weak"
 # sur la fiche de l'allele vedette. Aucun enrichissement : independance.
@@ -953,6 +919,7 @@ def _build_model(rng, hla_rows, n_articles):
         (h, o) for h in mentionable for o in outcomes
         if (h, o) not in reserved and h not in reserved
         and 0 < pop_h[h] * OUTCOME_POPULARITY[o] < 0.08
+        and pop_h[h] >= RANDOM_CLEAR_MIN_POP
         # Les complications les plus rares sont laissees aux paires
         # « moderees », dont la significativite exige un attendu quasi nul.
         and OUTCOME_POPULARITY[o] >= 0.18
@@ -1254,6 +1221,7 @@ def _generate(rng, n_articles):
     pair_mentions, associations), tous deja ordonnes pour l'ecriture."""
 
     hla_rows = build_hla_entities()
+    candidate_rows = hla_rows
     model = _build_model(rng, hla_rows, n_articles)
     authors_model = _build_author_model(rng, n_articles)
     years, year_weights = _year_weights()
@@ -1443,8 +1411,21 @@ def _generate(rng, n_articles):
             "first_year": pair_first_year[key],
         })
 
-    fdr = benjamini_hochberg([r["pval_fisher"] for r in rows])
-    fdr_two = benjamini_hochberg([r["pval_two_sided"] for r in rows])
+    # La famille de tests de la correction FDR ne compte que les paires vues au
+    # moins MIN_TEST_COOCCURRENCE fois, comme un pipeline qui ecarte les
+    # singletons avant de tester : avec un vocabulaire de ~900 alleles, les
+    # milliers de paires vues une seule fois noieraient autrement la
+    # correction de Benjamini-Hochberg. Une paire non testee a fdr = 1.0.
+    testable = [i for i, r in enumerate(rows)
+                if r["n_cooccurrence"] >= MIN_TEST_COOCCURRENCE]
+    fdr = [1.0] * len(rows)
+    fdr_two = [1.0] * len(rows)
+    for i, f1, f2 in zip(
+        testable,
+        benjamini_hochberg([rows[i]["pval_fisher"] for i in testable]),
+        benjamini_hochberg([rows[i]["pval_two_sided"] for i in testable]),
+    ):
+        fdr[i], fdr_two[i] = f1, f2
     for r, f1, f2 in zip(rows, fdr, fdr_two):
         # Format a chiffres significatifs, jamais round(x, 8) : un p de 2e-17
         # y serait ecrase a 0.0, reintroduisant l'underflow que MIN_PVALUE
@@ -1455,6 +1436,8 @@ def _generate(rng, n_articles):
         r["fdr_two_sided"] = _format_pvalue(f2)
 
     pair_mentions.sort(key=lambda m: (m["pmid"], m["hla"], m["outcome"], m["sentence_idx"]))
+
+    hla_rows = _prune_unmentioned(candidate_rows, {m["hla"] for m in pair_mentions})
 
     return articles, authors, hla_rows, pair_mentions, rows
 

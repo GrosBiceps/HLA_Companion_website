@@ -288,6 +288,7 @@ class TestDefaultCorpusLandscape(unittest.TestCase):
         cls.articles = read_csv(cls.out / "articles.csv")
         cls.hla = read_csv(cls.out / "hla_entities.csv")
         cls.authors = read_csv(cls.out / "authors.csv")
+        cls.mentions = read_csv(cls.out / "pair_mentions.csv")
         cls.level = {
             (r["hla"], r["outcome"]): compute_signal_level(
                 int(r["n_cooccurrence"]), float(r["fdr"]),
@@ -308,12 +309,59 @@ class TestDefaultCorpusLandscape(unittest.TestCase):
         from collections import Counter
 
         by_res = Counter(r["resolution"] for r in self.hla)
-        self.assertGreaterEqual(by_res["2-digit"], 35)
-        self.assertLessEqual(by_res["2-digit"], 50)
-        self.assertGreaterEqual(by_res["4-digit"], 60)
-        self.assertLessEqual(by_res["4-digit"], 100)
+        self.assertGreaterEqual(by_res["2-digit"], 125)
+        self.assertLessEqual(by_res["2-digit"], 190)
+        self.assertGreaterEqual(by_res["4-digit"], 500)
+        self.assertLessEqual(by_res["4-digit"], 900)
         keys = {r["hla"] for r in self.hla}
         self.assertIn(gen_synthetic.SHOWCASE_HLA, keys)
+        # Des alleles reels, courants en transplantation.
+        for real in ("HLA-A*01:01", "HLA-A*02:01", "HLA-A*02:05", "HLA-B*07:02",
+                     "HLA-B*08:01", "HLA-B*27:05", "HLA-B*44:02", "HLA-B*57:01",
+                     "HLA-C*07:01", "HLA-DRB1*03:01", "HLA-DRB1*15:01",
+                     "HLA-DRB1*04:04", "HLA-DQB1*03:02", "HLA-DQB1*06:02",
+                     "HLA-DPB1*04:01"):
+            self.assertIn(real, keys)
+
+    def test_loci_cover_class_i_and_ii(self):
+        loci = {r["locus"] for r in self.hla if r["resolution"] == "4-digit"}
+        self.assertTrue({"A", "B", "C", "DRB1", "DQB1", "DPB1"} <= loci)
+        self.assertTrue({"DRB3", "DRB4", "DRB5", "DQA1"} <= loci)
+
+    def test_hierarchy_is_five_levels_and_consistent(self):
+        by_id = {r["hla"]: r for r in self.hla}
+        for r in self.hla:
+            if r["resolution"] == "4-digit":
+                parent = by_id[r["parent_hla"]]
+                self.assertEqual(parent["resolution"], "2-digit")
+                self.assertTrue(r["hla"].startswith(parent["hla"] + ":"))
+                self.assertEqual(by_id[parent["parent_hla"]]["resolution"], "class")
+                self.assertEqual(by_id[parent["parent_hla"]]["hla"], r["locus"])
+            elif r["resolution"] == "2-digit":
+                self.assertEqual(r["parent_hla"], r["locus"])
+
+    def test_no_allele_is_left_unmentioned(self):
+        mentioned = {m["hla"] for m in self.mentions}
+        parents = {r["parent_hla"] for r in self.hla}
+        for r in self.hla:
+            if r["resolution"] in ("4-digit", "2-digit"):
+                self.assertTrue(
+                    r["hla"] in mentioned or r["hla"] in parents, r["hla"]
+                )
+
+    def test_long_tail_is_zipf_like(self):
+        from collections import defaultdict
+
+        articles = defaultdict(set)
+        for m in self.mentions:
+            articles[m["hla"]].add(m["pmid"])
+        counts = sorted(
+            (len(articles[r["hla"]]) for r in self.hla if r["resolution"] == "4-digit"),
+            reverse=True,
+        )
+        tail = [c for c in counts if c <= 5]
+        self.assertGreaterEqual(len(tail), 200, "pas assez d'alleles rares")
+        self.assertGreater(counts[0], 20 * (sum(tail) / len(tail)))
 
     def test_every_outcome_is_covered(self):
         self.assertEqual({r["outcome"] for r in self.assoc}, set(OUTCOME_LABELS))

@@ -24,14 +24,14 @@ export function HeaderContent({
   totalArticles,
 }: HeaderBarProps & { organ: OrganSelection }) {
   return (
-    <div className="mx-auto flex h-[var(--header-h)] max-w-content items-center gap-3 px-4 sm:px-6 lg:px-8">
+    <div className="mx-auto flex h-[var(--header-h)] max-w-[90rem] items-center gap-3 px-4 sm:px-6 lg:px-8">
       <Logo organ={organ} />
-      <div className="ml-2 hidden lg:block xl:ml-6">
+      <div className="ml-2 hidden xl:block xl:ml-6">
         <NavLinks organ={organ} />
       </div>
       <div className="ml-auto flex items-center gap-1.5">
         <OrganSelector organ={organ} organs={organs} totalArticles={totalArticles} />
-        <SearchCommand organ={organ} triggerClassName="w-40 xl:w-48" />
+        <SearchCommand organ={organ} triggerClassName="max-2xl:w-9 max-2xl:justify-center max-2xl:px-0 max-2xl:[&>span]:hidden 2xl:w-48" />
         <MobileNav organ={organ} />
       </div>
     </div>

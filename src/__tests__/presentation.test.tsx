@@ -6,8 +6,9 @@ import { NAV_ITEMS } from "../components/shell/nav";
 const { default: PresentationPage } = await import("../app/presentation/page");
 
 describe("page /presentation (rendu)", () => {
-  const renderPage = () => {
-    const { container } = render(<PresentationPage />);
+  const renderPage = async () => {
+    const element = await PresentationPage({});
+    const { container } = render(element);
     return { container, text: container.textContent ?? "" };
   };
 
@@ -17,8 +18,8 @@ describe("page /presentation (rendu)", () => {
     expect(NAV_ITEMS[1].label).toBe("Présentation");
   });
 
-  it("porte l'encart epistemique complet", () => {
-    const { container, text } = renderPage();
+  it("porte l'encart epistemique complet", async () => {
+    const { container, text } = await renderPage();
     expect(container.querySelector("#epistemic-notice-title")).not.toBeNull();
     expect(container.querySelector("#cadrage")).not.toBeNull();
     expect(text).toMatch(/pas des associations cliniques ni causales/i);
@@ -26,8 +27,8 @@ describe("page /presentation (rendu)", () => {
     expect(text).toMatch(/0,44/);
   });
 
-  it("rend les sections deplacees depuis l'accueil et un sommaire", () => {
-    const { container } = renderPage();
+  it("rend les sections deplacees depuis l'accueil et un sommaire", async () => {
+    const { container } = await renderPage();
     for (const id of ["cadrage", "corpus", "gestes", "signaux", "entrees", "contexte"]) {
       expect(container.querySelector(`#${id}`), id).not.toBeNull();
     }
@@ -37,8 +38,8 @@ describe("page /presentation (rendu)", () => {
     expect(container.querySelector("#corpus")!.textContent).toMatch(/Le corpus en chiffres/);
   });
 
-  it("relie les pages principales", () => {
-    const { container } = renderPage();
+  it("relie les pages principales", async () => {
+    const { container } = await renderPage();
     const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     for (const h of [
       "/graph",
@@ -53,8 +54,8 @@ describe("page /presentation (rendu)", () => {
     }
   });
 
-  it("garde les trois gestes et la legende compacte des niveaux", () => {
-    const { container } = renderPage();
+  it("garde les trois gestes et la legende compacte des niveaux", async () => {
+    const { container } = await renderPage();
     const steps = container.querySelector("#demarche-titre")?.closest("section");
     expect(steps).not.toBeNull();
     expect(steps!.querySelectorAll("ol > li")).toHaveLength(3);
@@ -65,8 +66,8 @@ describe("page /presentation (rendu)", () => {
     }
   });
 
-  it("propose les quatre portes « Par où commencer ? »", () => {
-    const { container } = renderPage();
+  it("propose les quatre portes « Par où commencer ? »", async () => {
+    const { container } = await renderPage();
     const entrees = container.querySelector("#entrees")!;
     expect(entrees.textContent).toMatch(/Par où commencer/);
     const hrefs = [...entrees.querySelectorAll("a")].map((a) => a.getAttribute("href"));
@@ -75,21 +76,21 @@ describe("page /presentation (rendu)", () => {
     }
   });
 
-  it("n'affiche aucune metrique brute d'association", () => {
-    const { text } = renderPage();
+  it("n'affiche aucune metrique brute d'association", async () => {
+    const { text } = await renderPage();
     expect(text).not.toMatch(/NPMI|odds ratio|\bFDR\b|p\s*=\s*0|IC 95/i);
   });
 
-  it("n'emploie aucun terme causal proscrit", () => {
-    const { text } = renderPage();
+  it("n'emploie aucun terme causal proscrit", async () => {
+    const { text } = await renderPage();
     const lower = text.toLowerCase();
     for (const term of ["associé à", "lié à", "risque de", "prédit", "provoque", "entraîne"]) {
       expect(lower).not.toContain(term);
     }
   });
 
-  it("n'affiche aucune cle technique de complication comme texte", () => {
-    const { container, text } = renderPage();
+  it("n'affiche aucune cle technique de complication comme texte", async () => {
+    const { container, text } = await renderPage();
     // Les cles a souligne (graft_loss...) ne doivent jamais apparaitre ;
     // les sigles (DSA, ABMR) n'apparaissent qu'entre parentheses dans un
     // libelle, ou dans une phrase source citee.

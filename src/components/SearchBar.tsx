@@ -604,6 +604,7 @@ export function SearchCommand({
       <button
         type="button"
         onClick={() => setOpen(true)}
+        aria-label="Rechercher dans le corpus"
         className={cn(
           "group hidden h-9 items-center gap-2 rounded-lg border border-line bg-surface-muted/70 pl-3 pr-1.5 text-sm text-fg-subtle shadow-xs transition hover:border-line-strong hover:bg-surface hover:text-fg-muted sm:flex",
           triggerClassName,

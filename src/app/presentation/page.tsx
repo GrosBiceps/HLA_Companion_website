@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Grid3x3, ListTree } from "lucide-react";
 import { getCorpusVersion } from "@/lib/db";
+import { organFromPage, type PageSearchParams } from "@/lib/organ";
 import {
   getCorpusStats,
   getLocusOverview,
@@ -95,18 +96,23 @@ function partialYearOf(builtAt: string, yearMax: number | null): number | null {
  * ⚠ Aucune metrique d'association brute (NPMI, OR, FDR) n'est affichee :
  * seulement des niveaux qualitatifs et des effectifs.
  */
-export default function PresentationPage() {
+export default async function PresentationPage({
+  searchParams,
+}: {
+  searchParams?: PageSearchParams;
+}) {
+  const organ = await organFromPage(searchParams);
   const corpus = getCorpusVersion();
-  const stats = getCorpusStats();
-  const series = getPublicationsByYear();
+  const stats = getCorpusStats(organ);
+  const series = getPublicationsByYear(organ);
   const partialYear = partialYearOf(corpus.builtAt, stats.yearMax);
 
   const showcasePairs = pickDiverse(
-    getSignalHighlights({ levels: ["strong", "clear"], resolutions: ["4-digit"], limit: 80 }),
+    getSignalHighlights({ levels: ["strong", "clear"], resolutions: ["4-digit"], limit: 80, organ }),
     6,
   );
 
-  const categories = getOutcomesByCategory();
+  const categories = getOutcomesByCategory(organ);
   const ids = TOC.filter((t) => t.id !== "signaux" || showcasePairs.length > 0).map((t) => t.id);
 
   return (
@@ -186,7 +192,7 @@ export default function PresentationPage() {
                 </LinkButton>
               }
             >
-              <SignalShowcase pairs={showcasePairs} />
+              <SignalShowcase pairs={showcasePairs} organ={organ} />
             </LandingSection>
           ) : null}
 
@@ -198,9 +204,9 @@ export default function PresentationPage() {
             lead="Quatre portes d'entrée selon ce que vous avez en tête, puis les raccourcis par locus, par catégorie clinique et par auteur."
           >
             <EntryPoints
-              loci={getLocusOverview(4)}
+              loci={getLocusOverview(4, organ)}
               categories={categories}
-              authors={getTopAuthors(6)}
+              authors={getTopAuthors(6, organ)}
               synthetic={corpus.isSynthetic}
             />
           </LandingSection>

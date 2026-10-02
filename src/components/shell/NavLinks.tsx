@@ -15,7 +15,7 @@ import { NAV_ITEMS, isActive } from "./nav";
 export function NavLinks({ organ = ALL_ORGANS }: { organ?: OrganSelection }) {
   const pathname = usePathname() ?? "/";
   return (
-    <nav aria-label="Navigation principale" className="hidden lg:block">
+    <nav aria-label="Navigation principale" className="hidden xl:block">
       <ul className="flex items-center gap-0.5">
         {NAV_ITEMS.map((item) => {
           const active = isActive(pathname, item.href);
@@ -68,7 +68,7 @@ export function MobileNav({ organ = ALL_ORGANS }: { organ?: OrganSelection }) {
   }, [open]);
 
   return (
-    <div className="lg:hidden">
+    <div className="xl:hidden">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}

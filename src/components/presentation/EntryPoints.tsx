@@ -6,6 +6,7 @@ import type { CategoryOverview, LocusOverview } from "@/lib/queries";
 import { categoryClasses, categoryDisplay, hlaClassColor } from "@/lib/theme";
 import type { Author } from "@/lib/types";
 import { NUMBER_FORMAT, plural } from "@/components/landing/constellation";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 
 function PanelHeader({
   icon,
@@ -45,7 +46,7 @@ function PanelHeader({
 }
 
 /** Par allele : loci groupes par classe HLA, alleles les plus cites. */
-function ByAllele({ loci }: { loci: LocusOverview[] }) {
+function ByAllele({ loci, organ }: { loci: LocusOverview[]; organ: OrganSelection }) {
   const classes = ["I", "II"].map((c) => ({
     hlaClass: c,
     loci: loci.filter((l) => l.hlaClass === c),
@@ -56,7 +57,7 @@ function ByAllele({ loci }: { loci: LocusOverview[] }) {
         icon={<Dna />}
         eyebrow="Par allèle"
         title="Six loci, deux classes"
-        href="/allele"
+        href={withOrgan("/allele", organ)}
         hrefLabel="Tous les allèles"
       />
       {classes.map(({ hlaClass, loci: group }) =>
@@ -86,7 +87,7 @@ function ByAllele({ loci }: { loci: LocusOverview[] }) {
                     {l.topAlleles.map((a) => (
                       <Link
                         key={a.hla}
-                        href={`/allele/${encodeURIComponent(a.hla)}`}
+                        href={withOrgan(`/allele/${encodeURIComponent(a.hla)}`, organ)}
                         className="inline-flex items-center rounded-md border border-line bg-surface-muted px-2 py-0.5 text-xs text-fg transition hover:border-primary/50 hover:bg-primary-soft hover:text-primary-soft-fg"
                       >
                         <AlleleName hla={a.hla} />
@@ -104,14 +105,14 @@ function ByAllele({ loci }: { loci: LocusOverview[] }) {
 }
 
 /** Par complication : 7 categories cliniques, chacune avec ses complications. */
-function ByComplication({ categories }: { categories: CategoryOverview[] }) {
+function ByComplication({ categories, organ }: { categories: CategoryOverview[]; organ: OrganSelection }) {
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
       <PanelHeader
         icon={<Stethoscope />}
         eyebrow="Par complication"
         title={`${categories.length} catégories cliniques`}
-        href="/complication"
+        href={withOrgan("/complication", organ)}
         hrefLabel="Toutes les complications"
       />
       <ul className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
@@ -131,7 +132,7 @@ function ByComplication({ categories }: { categories: CategoryOverview[] }) {
               {c.outcomes.map((o) => (
                 <li key={o.outcome}>
                   <Link
-                    href={`/complication/${encodeURIComponent(o.outcome)}`}
+                    href={withOrgan(`/complication/${encodeURIComponent(o.outcome)}`, organ)}
                     className="inline-block rounded-md px-1.5 py-0.5 text-xs text-fg-muted ring-1 ring-inset ring-line transition hover:bg-primary-soft hover:text-primary-soft-fg hover:ring-primary/30"
                   >
                     {o.label}
@@ -147,7 +148,15 @@ function ByComplication({ categories }: { categories: CategoryOverview[] }) {
 }
 
 /** Par auteur : les auteurs les plus publies du corpus. */
-function ByAuthor({ authors, synthetic }: { authors: Author[]; synthetic: boolean }) {
+function ByAuthor({
+  authors,
+  synthetic,
+  organ,
+}: {
+  authors: Author[];
+  synthetic: boolean;
+  organ: OrganSelection;
+}) {
   const max = Math.max(1, ...authors.map((a) => a.nPublications));
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
@@ -156,7 +165,7 @@ function ByAuthor({ authors, synthetic }: { authors: Author[]; synthetic: boolea
         {authors.map((a, i) => (
           <li key={a.authorId}>
             <Link
-              href={`/auteur/${encodeURIComponent(a.authorId)}`}
+              href={withOrgan(`/auteur/${encodeURIComponent(a.authorId)}`, organ)}
               className="group grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-3"
             >
               <span className="tabular text-xs text-fg-subtle">{i + 1}</span>
@@ -215,14 +224,14 @@ const DOORS = [
 ];
 
 /** « Par où commencer ? » : quatre grandes portes, plus l'astuce auteur. */
-function Doors() {
+function Doors({ organ }: { organ: OrganSelection }) {
   return (
     <div className="space-y-3">
       <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {DOORS.map(({ href, icon: Icon, title, text }) => (
           <li key={href} className="flex">
             <Link
-              href={href}
+              href={withOrgan(href, organ)}
               className={cn(
                 cardClasses({ interactive: true, padding: "lg" }),
                 "group flex w-full flex-col gap-3",
@@ -270,20 +279,22 @@ export function EntryPoints({
   categories,
   authors,
   synthetic,
+  organ = ALL_ORGANS,
 }: {
   loci: LocusOverview[];
   categories: CategoryOverview[];
   authors: Author[];
   synthetic: boolean;
+  organ?: OrganSelection;
 }) {
   return (
     <div className="space-y-8">
-      <Doors />
+      <Doors organ={organ} />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-        <ByAllele loci={loci} />
-        <ByComplication categories={categories} />
+        <ByAllele loci={loci} organ={organ} />
+        <ByComplication categories={categories} organ={organ} />
       </div>
-      <ByAuthor authors={authors} synthetic={synthetic} />
+      <ByAuthor authors={authors} synthetic={synthetic} organ={organ} />
     </div>
   );
 }

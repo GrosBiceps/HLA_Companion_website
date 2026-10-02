@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Callout, LinkButton, PageHeader } from "@/components/ui";
 import GraphExplorerClient from "@/components/GraphExplorerClient";
 import type { Metadata } from "next";
 import { getDefaultGraphCenter, getNeighborhood } from "@/lib/queries";
@@ -67,24 +68,42 @@ export default async function GraphPage({ searchParams }: SearchParams) {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-2">
-        <h1 className="font-serif text-3xl font-semibold tracking-tight sm:text-4xl text-fg">
-          Explorateur de co-occurrences
-        </h1>
-        {centerNode && (
-          <p className="text-sm text-fg-muted">
-            Vue centrée sur{" "}
-            {/* Libelle affichable, jamais la cle technique. */}
-            <strong>{centerNode.label}</strong>, à {depth} saut
-            {depth > 1 ? "s" : ""}.
-          </p>
-        )}
-      </header>
+      <PageHeader
+        eyebrow="Explorateur de graphe"
+        title="Co-mentions de proche en proche"
+        description={
+          centerNode ? (
+            <>
+              Vue centrée sur{" "}
+              {/* Libelle affichable, jamais la cle technique. */}
+              <strong
+                className={centerNode.type === "hla" ? "allele text-fg" : "text-fg"}
+              >
+                {centerNode.label}
+              </strong>
+              , à {depth} saut{depth > 1 ? "s" : ""}. Survolez un nœud pour
+              isoler ses voisins, cliquez pour le détail, double-cliquez pour
+              vous y recentrer.
+            </>
+          ) : undefined
+        }
+        actions={
+          centerNode ? (
+            <LinkButton
+              href={
+                centerNode.type === "hla"
+                  ? `/allele/${encodeURIComponent(centerNode.id)}`
+                  : `/complication/${encodeURIComponent(centerNode.id)}`
+              }
+              size="sm"
+            >
+              Fiche détaillée
+            </LinkButton>
+          ) : undefined
+        }
+      />
 
-      <section
-        aria-label="Comment lire ce graphe"
-        className="rounded-lg border-l-[3px] border-primary/60 bg-primary-soft/60 px-4 py-3 text-sm leading-relaxed text-fg"
-      >
+      <Callout tone="framing" aria-label="Comment lire ce graphe" title="Comment lire ce graphe">
         <p>
           Chaque lien signale que deux termes{" "}
           <strong>apparaissent dans les mêmes articles</strong> du corpus
@@ -93,25 +112,20 @@ export default async function GraphPage({ searchParams }: SearchParams) {
           co-occurrence est marquée dans le texte, pas qu&apos;elle est
           observée chez des patients.
         </p>
-        <p className="mt-1">
-          Le graphe démarre à un seul saut pour rester lisible. Cliquez un
-          nœud pour vous y recentrer et avancer de proche en proche.{" "}
-          <Link
-            href="/methode"
-            className="font-medium underline decoration-primary/30 underline-offset-[3px]
-                       hover:text-primary"
-          >
+        <p>
+          Le graphe démarre à un seul saut pour rester lisible ; les signaux
+          faibles sont estompés, jamais masqués.{" "}
+          <Link href="/methode" className="link font-medium">
             Méthodologie
           </Link>
         </p>
-      </section>
+      </Callout>
 
       {requested && resolved !== requested && (
-        <p className="rounded-lg border border-warn-line bg-warn-soft p-2 text-sm
-                      text-warn-soft-fg">
+        <Callout tone="warn">
           Le point de départ demandé n&apos;existe pas dans ce corpus. La vue
           repart du point d&apos;entrée par défaut.
-        </p>
+        </Callout>
       )}
 
       {!resolved ? (
@@ -127,22 +141,6 @@ export default async function GraphPage({ searchParams }: SearchParams) {
           depth={depth}
           minSignal={minSignal}
         />
-      )}
-
-      {centerNode && (
-        <p className="text-sm text-fg-muted">
-          Fiche détaillée :{" "}
-          <Link
-            href={
-              centerNode.type === "hla"
-                ? `/allele/${encodeURIComponent(centerNode.id)}`
-                : `/complication/${encodeURIComponent(centerNode.id)}`
-            }
-            className="font-medium underline decoration-primary/30 underline-offset-[3px]"
-          >
-            {centerNode.label}
-          </Link>
-        </p>
       )}
     </div>
   );

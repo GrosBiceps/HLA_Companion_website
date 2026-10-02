@@ -95,7 +95,8 @@ PubMed → filtrage → NLP → stats
 
 Trois choix de versions sont délibérés. Ils paraissent arbitraires au milieu
 des autres plages `^`, mais les « corriger » casse le build.
-Le projet cible **Node 20** (cf. `engines`) :
+Le projet cible **Node 20 en local** ; `engines` accepte aussi Node 22, que
+Vercel utilise (Node 20 n'y est plus proposé) :
 
 - **`better-sqlite3` figé à `12.2.0`, sans `^`.** C'est la dernière version
   publiant un binaire précompilé pour Node 20 / win32-x64 (ABI 115). Au-delà,
@@ -121,6 +122,14 @@ contrat de schéma, en attendant le rapatriement des sorties réelles du pipelin
 
 Le builder est écrit pour avaler les CSV réels sans modification. Bascule par une
 commande.
+
+### Déploiement (Vercel)
+
+La base n'étant pas versionnée, `npm run build` déclenche d'abord
+`scripts/ensure-db.mjs` (`prebuild`) : si la base est absente, il la
+reconstruit depuis `data/synthetic` avec `scripts/build_sqlite.py` (Python,
+bibliothèque standard). `next.config.ts` force ensuite l'inclusion de
+`dist/*.sqlite` dans les fonctions serverless (`outputFileTracingIncludes`).
 
 ---
 

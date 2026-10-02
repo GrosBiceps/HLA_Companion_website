@@ -1,12 +1,9 @@
-import { ArrowRight, Grid3x3 } from "lucide-react";
+import { Grid3x3 } from "lucide-react";
 import { getCorpusVersion } from "@/lib/db";
 import {
-  getAlleleByKey,
-  getAssociationsForAllele,
   getCorpusStats,
   getLocusOverview,
   getOutcomesByCategory,
-  getPairMentions,
   getPublicationsByYear,
   getSignalHighlights,
   getTopAuthors,
@@ -18,13 +15,14 @@ import { CorpusFigures } from "@/components/landing/CorpusFigures";
 import { EntryPoints } from "@/components/landing/EntryPoints";
 import { Hero } from "@/components/landing/Hero";
 import { LandingSection } from "@/components/landing/LandingSection";
-import { ReadingGuide, type ReadingExample } from "@/components/landing/ReadingGuide";
+import { FirstVisitHint } from "@/components/landing/FirstVisitHint";
+import { QuickSteps } from "@/components/landing/QuickSteps";
 import { ScientificContext } from "@/components/landing/ScientificContext";
 import { SignalShowcase } from "@/components/landing/SignalShowcase";
 import { getLegacyMapSize } from "@/components/landing/legacy";
 
-/** Allele vitrine de la demonstration. */
-const SHOWCASE_ALLELE = "HLA-DQB1*02:01";
+/** Allele propose en exemple sous le champ de recherche. */
+const EXAMPLE_ALLELE = "HLA-DQB1*02:01";
 
 function formatBuiltAt(builtAt: string): string {
   const date = new Date(builtAt);
@@ -54,6 +52,9 @@ function partialYearOf(builtAt: string, yearMax: number | null): number | null {
 /**
  * Accueil — Server Component, aucun JavaScript client hors du champ de
  * recherche.
+ *
+ * LES EXPLICATIONS « COMMENT LIRE LE SITE » VIVENT DANS /guide : l'accueil
+ * n'en garde qu'un bandeau de trois gestes (`QuickSteps`) et un lien.
  *
  * ORDRE DES SECTIONS. Le cadrage epistemique est lu AVANT tout chemin vers
  * une fiche : le bandeau d'ouverture dit « co-occurrences textuelles » et
@@ -87,37 +88,11 @@ export default function HomePage() {
   );
 
   const categories = getOutcomesByCategory();
-  const showcaseAllele = getAlleleByKey(SHOWCASE_ALLELE);
-  const showcaseRows = showcaseAllele ? getAssociationsForAllele(SHOWCASE_ALLELE) : [];
-  const exampleRow =
-    showcaseRows.find((a) => a.signalLevel === "strong") ?? showcaseRows[0] ?? null;
-  const exampleMention = exampleRow
-    ? (getPairMentions(exampleRow.hla, exampleRow.outcome)
-        .filter((m) => m.polarity === "positive")
-        .sort((a, b) => a.sentence.length - b.sentence.length)[0] ?? null)
-    : null;
-  const example: ReadingExample | null = exampleRow
-    ? {
-        hla: exampleRow.hla,
-        outcome: exampleRow.outcome,
-        label: exampleRow.label,
-        category: exampleRow.category,
-        signalLevel: exampleRow.signalLevel,
-        nCooccurrence: exampleRow.nCooccurrence,
-        nNegated: exampleRow.nNegated,
-        synthetic: corpus.isSynthetic,
-        mention: exampleMention
-          ? {
-              sentence: exampleMention.sentence,
-              hlaSpan: exampleMention.hlaSpan,
-              outcomeSpan: exampleMention.outcomeSpan,
-              pmid: exampleMention.pmid,
-              year: exampleMention.year,
-              journal: exampleMention.journal,
-            }
-          : null,
-      }
-    : null;
+  const topAuthor = getTopAuthors(1)[0] ?? null;
+  const exampleOutcome =
+    categories.flatMap((c) => c.outcomes).find((o) => /humoral/i.test(o.label)) ??
+    categories[0]?.outcomes[0] ??
+    null;
 
   return (
     <div className="space-y-16 sm:space-y-20">
@@ -126,11 +101,20 @@ export default function HomePage() {
         yearMin={stats.yearMin}
         yearMax={stats.yearMax}
         constellation={constellation}
+        examples={{
+          allele: EXAMPLE_ALLELE,
+          outcome: exampleOutcome
+            ? { key: exampleOutcome.outcome, label: exampleOutcome.label }
+            : null,
+          author: topAuthor ? { id: topAuthor.authorId, name: topAuthor.displayName } : null,
+        }}
       />
 
       <div id="cadrage" className="scroll-mt-28">
         <EpistemicNotice corpusVersion={corpus.version} />
       </div>
+
+      <QuickSteps />
 
       <LandingSection
         id="corpus"
@@ -154,20 +138,10 @@ export default function HomePage() {
         />
       </LandingSection>
 
-      <LandingSection
-        id="lire"
-        index="02"
-        eyebrow="Comment lire le site"
-        title="De l'allèle aux phrases sources, en deux clics"
-        lead="Chaque chiffre du site est traçable jusqu'aux phrases qui le produisent. C'est le geste de lecture central : un signal ne vaut que ce que valent ses sources."
-      >
-        <ReadingGuide example={example} />
-      </LandingSection>
-
       {showcasePairs.length > 0 ? (
         <LandingSection
           id="signaux"
-          index="03"
+          index="02"
           eyebrow="Signaux les plus marqués"
           title="Des paires à relire en priorité"
           lead="Paires allèle × complication aux niveaux de signal les plus élevés (allèles à 4 champs, une paire par complication). Un signal fort est un point de départ de lecture, pas une conclusion : il peut refléter une mode de publication ou un biais d'indexation."
@@ -184,37 +158,22 @@ export default function HomePage() {
 
       <LandingSection
         id="entrees"
-        index="04"
+        index="03"
         eyebrow="Points d'entrée"
-        title="Par où commencer"
-        lead="Partir d'un allèle, d'une complication ou d'un auteur ; ou ouvrir directement la fiche de démonstration."
-        actions={
-          <LinkButton href="/graph" variant="ghost" size="sm">
-            Explorer le graphe
-            <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
-          </LinkButton>
-        }
+        title="Par où commencer ?"
+        lead="Quatre portes d'entrée selon ce que vous avez en tête, puis les raccourcis par locus, par catégorie clinique et par auteur."
       >
         <EntryPoints
           loci={getLocusOverview(4)}
           categories={categories}
           authors={getTopAuthors(6)}
-          showcase={
-            showcaseAllele
-              ? {
-                  allele: showcaseAllele,
-                  top: showcaseRows.slice(0, 4),
-                  total: showcaseRows.length,
-                }
-              : null
-          }
           synthetic={corpus.isSynthetic}
         />
       </LandingSection>
 
       <LandingSection
         id="contexte"
-        index="05"
+        index="04"
         eyebrow="Contexte scientifique"
         title="Une cartographie de la littérature, pas de la clinique"
       >
@@ -224,6 +183,8 @@ export default function HomePage() {
           legacy={getLegacyMapSize()}
         />
       </LandingSection>
+
+      <FirstVisitHint />
     </div>
   );
 }

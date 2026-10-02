@@ -43,6 +43,7 @@ import {
   getTopArticlesForOutcome,
 } from "@/lib/queries";
 import type { AssociationRow, HlaEntity } from "@/lib/types";
+import { LOCUS_ORDER as LOCI_ORDER } from "@/lib/loci";
 
 /**
  * Fiche complication — NAVIGATION INVERSE de la fiche allele, de facture
@@ -97,7 +98,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 /** Ordre des loci : classe I puis classe II, puis tout locus inattendu. */
-const LOCUS_ORDER = ["A", "B", "C", "DRB1", "DQB1", "DPB1"];
+const LOCUS_ORDER: readonly string[] = LOCI_ORDER;
 
 interface LocusGroup {
   key: string;

@@ -6,14 +6,14 @@ import { AlleleName, Badge, CategoryBadge } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { SIGNAL_CLASSES } from "@/lib/theme";
 import type { SignalLevel } from "@/lib/types";
-import { plural } from "./constellation";
+import { plural } from "@/components/landing/constellation";
 
 /**
  * Gloses ACCENTUEES des niveaux de signal, pour la legende de l'accueil.
  * Meme semantique que `SIGNAL_LABELS` (`labels.ts`, miroir sans accents du
  * pipeline Python), reformulee pour une lecture de premier contact.
  */
-const LEGEND: { level: SignalLevel; gloss: string }[] = [
+export const LEGEND: { level: SignalLevel; gloss: string }[] = [
   {
     level: "strong",
     gloss:
@@ -97,19 +97,17 @@ function Step({
 }
 
 /**
- * « Comment lire le site » : le chemin de verification en trois temps
+ * Guide de lecture : le chemin de verification en trois temps
  * (allele → complication → phrases sources), illustre par une paire REELLE
  * du corpus (celle de l'allele vitrine), puis la legende des cinq niveaux.
  *
  * Les maquettes sont `aria-hidden` : ce sont des illustrations, le texte des
  * etapes porte l'information.
  */
-export function ReadingGuide({ example }: { example: ReadingExample | null }) {
+export function ReadingSteps({ example }: { example: ReadingExample | null }) {
   const hla = example?.hla ?? "HLA-DQB1*02:01";
-  const href = `/allele/${encodeURIComponent(hla)}`;
 
   return (
-    <div className="space-y-6">
       <ol className="grid gap-4 md:grid-cols-3">
         <Step
           n={1}
@@ -204,7 +202,15 @@ export function ReadingGuide({ example }: { example: ReadingExample | null }) {
           est erronée : c&apos;est ici qu&apos;on le voit.
         </Step>
       </ol>
+  );
+}
 
+/** Legende des cinq niveaux de signal, avec lien d'essai sur l'allele vitrine. */
+export function SignalLegend({ example }: { example: ReadingExample | null }) {
+  const hla = example?.hla ?? "HLA-DQB1*02:01";
+  const href = `/allele/${encodeURIComponent(hla)}`;
+
+  return (
       <div className="grid gap-4 rounded-xl border border-line bg-surface-muted p-4 sm:p-5 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-8">
         <div className="space-y-2">
           <p className="eyebrow">Légende</p>
@@ -231,6 +237,5 @@ export function ReadingGuide({ example }: { example: ReadingExample | null }) {
           ))}
         </dl>
       </div>
-    </div>
   );
 }

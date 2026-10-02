@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -14,6 +15,7 @@ import {
   CornerDownLeft,
   Dna,
   FileText,
+  Layers,
   Loader2,
   Search,
   Stethoscope,
@@ -44,13 +46,24 @@ const DEBOUNCE_MS = 200;
 
 const ENTITY_LABELS: Record<EntityType, string> = {
   allele: "Allèle",
+  serotype: "Sérotype",
   outcome: "Complication",
   article: "Article",
   author: "Auteur",
 };
 
+/** Intitule de groupe, au pluriel, affiche au-dessus de chaque bloc de resultats. */
+const GROUP_LABELS: Record<EntityType, string> = {
+  allele: "Allèles",
+  serotype: "Sérotypes",
+  outcome: "Complications",
+  article: "Articles",
+  author: "Auteurs",
+};
+
 const ENTITY_ICONS: Record<EntityType, typeof Dna> = {
   allele: Dna,
+  serotype: Layers,
   outcome: Stethoscope,
   article: FileText,
   author: UserRound,
@@ -65,6 +78,8 @@ function hrefFor(hit: SearchHit): string {
   switch (hit.entityType) {
     case "allele":
       return `/allele/${encodeURIComponent(hit.entityId)}`;
+    case "serotype":
+      return `/serotype/${encodeURIComponent(hit.entityId)}`;
     case "outcome":
       return `/complication/${encodeURIComponent(hit.entityId)}`;
     case "article":
@@ -215,53 +230,80 @@ function SearchResults({
         {hits.map((hit, index) => {
           const Icon = ENTITY_ICONS[hit.entityType];
           const selected = index === active;
+          const child = hit.childOf !== undefined;
+          const startsGroup = index === 0 || hits[index - 1].entityType !== hit.entityType;
           return (
-            <li
-              key={`${hit.entityType}:${hit.entityId}`}
-              id={`${listId}-${index}`}
-              role="option"
-              aria-selected={selected}
-            >
-              <Link
-                href={hrefFor(hit)}
-                tabIndex={-1}
-                onMouseMove={() => onHover(index)}
-                onClick={onNavigate}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm",
-                  selected ? "bg-primary-soft text-fg" : "text-fg hover:bg-surface-muted",
-                )}
+            <Fragment key={`${hit.entityType}:${hit.entityId}`}>
+              {startsGroup ? (
+                <li
+                  role="presentation"
+                  className="eyebrow px-2.5 pb-1 pt-2.5 first:pt-1"
+                >
+                  {GROUP_LABELS[hit.entityType]}
+                </li>
+              ) : null}
+              <li
+                id={`${listId}-${index}`}
+                role="option"
+                aria-selected={selected}
               >
-                <span
-                  aria-hidden="true"
+                <Link
+                  href={hrefFor(hit)}
+                  tabIndex={-1}
+                  onMouseMove={() => onHover(index)}
+                  onClick={onNavigate}
                   className={cn(
-                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1 ring-inset",
-                    selected
-                      ? "bg-surface text-primary ring-primary/20"
-                      : "bg-surface-muted text-fg-subtle ring-line",
+                    "flex items-center gap-3 rounded-lg pr-2.5 text-sm", child ? "py-1" : "py-2",
+                    child ? "pl-8" : "pl-2.5",
+                    selected ? "bg-primary-soft text-fg" : "text-fg hover:bg-surface-muted",
                   )}
                 >
-                  <Icon className="h-3.5 w-3.5" />
-                </span>
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate",
-                    hit.entityType === "allele" && "allele",
+                  {child ? (
+                    <span
+                      aria-hidden="true"
+                      className="-ml-4 mr-[-0.25rem] h-4 w-3 shrink-0 rounded-bl-md border-b border-l border-line-strong"
+                    />
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1 ring-inset",
+                        selected
+                          ? "bg-surface text-primary ring-primary/20"
+                          : "bg-surface-muted text-fg-subtle ring-line",
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </span>
                   )}
-                >
-                  {hit.label}
-                </span>
-                <span className="shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-2xs font-medium text-fg-subtle ring-1 ring-inset ring-line">
-                  {ENTITY_LABELS[hit.entityType]}
-                </span>
-                {selected ? (
-                  <CornerDownLeft
-                    aria-hidden="true"
-                    className="hidden h-3.5 w-3.5 text-fg-subtle sm:block"
-                  />
-                ) : null}
-              </Link>
-            </li>
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        "block truncate",
+                        hit.entityType === "allele" && "allele",
+                        hit.entityType === "serotype" && "font-semibold",
+                      )}
+                    >
+                      {hit.label}
+                    </span>
+                    {hit.detail ? (
+                      <span className="block truncate text-2xs text-fg-subtle">
+                        {hit.detail}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-2xs font-medium text-fg-subtle ring-1 ring-inset ring-line">
+                    {hit.badge ?? ENTITY_LABELS[hit.entityType]}
+                  </span>
+                  {selected ? (
+                    <CornerDownLeft
+                      aria-hidden="true"
+                      className="hidden h-3.5 w-3.5 text-fg-subtle sm:block"
+                    />
+                  ) : null}
+                </Link>
+              </li>
+            </Fragment>
           );
         })}
       </ul>
@@ -270,7 +312,7 @@ function SearchResults({
 }
 
 const PLACEHOLDER =
-  "Rechercher un allèle, une complication, un article, un auteur…";
+  "Allèle (A*02, DQB1*02:01), sérotype (DR15, B27), complication, article…";
 
 /**
  * Champ de recherche EN LIGNE.
@@ -355,8 +397,15 @@ function isTyping(target: EventTarget | null): boolean {
   );
 }
 
+/** Pages d'index proposees quand la palette est vide. */
+const QUICK_LINKS = [
+  { href: "/allele", label: "Index des allèles" },
+  { href: "/serotype", label: "Index des sérotypes" },
+  { href: "/complication", label: "Complications" },
+];
+
 /** Exemples proposes quand la palette est vide (ils remplissent le champ). */
-const EXAMPLES = ["HLA-DQB1*02:01", "HLA-A*02", "Rejet", "BK virus"];
+const EXAMPLES = ["A*02", "DQB1*02:01", "DR15", "B27", "Cw7", "DRB1", "Rejet"];
 
 /**
  * Palette de recherche — declencheur d'en-tete + dialogue modal.
@@ -527,13 +576,30 @@ export function SearchCommand({
                         }}
                         className={cn(
                           "rounded-full bg-surface-muted px-3 py-1 text-xs text-fg-muted ring-1 ring-inset ring-line hover:bg-primary-soft hover:text-primary-soft-fg",
-                          example.startsWith("HLA-") && "allele",
+                          /[*:]|^[A-Z]{2,4}\d?$/.test(example) && "allele",
                         )}
                       >
                         {example}
                       </button>
                     ))}
                   </div>
+                  <p className="eyebrow pt-2">Parcourir</p>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {QUICK_LINKS.map((link) => (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        onClick={close}
+                        className="rounded-full px-3 py-1 text-fg-muted ring-1 ring-inset ring-line hover:bg-primary-soft hover:text-primary-soft-fg"
+                      >
+                        {link.label}
+                      </Link>
+                    ))}
+                  </div>
+                  <p className="text-2xs leading-relaxed text-fg-subtle">
+                    Tolère la casse, les espaces et l&apos;absence de « * » ou
+                    de « : » : « a02 », « DQB1 02 01 », « dr 15 » fonctionnent.
+                  </p>
                 </div>
               )}
             </div>

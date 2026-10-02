@@ -25,6 +25,8 @@ import {
 import { ArticleSummaryList } from "@/components/entity/ArticleSummaryList";
 import { CompactAssociationList } from "@/components/entity/CompactAssociationList";
 import { OutcomeProfileChart } from "@/components/entity/OutcomeProfileChart";
+import { ResolutionNav } from "@/components/entity/ResolutionNav";
+import { SerotypeBadges } from "@/components/entity/SerotypeParts";
 import { YearSparkline } from "@/components/entity/YearSparkline";
 import {
   activeYears,
@@ -44,6 +46,8 @@ import {
   getOutcomeCount,
   getTopArticlesForAllele,
 } from "@/lib/queries";
+import { getAlleleChildSummaries } from "@/lib/allele-nav";
+import { getSerotypesForAllele } from "@/lib/serotypes";
 import type { AssociationRow } from "@/lib/types";
 
 /**
@@ -147,12 +151,20 @@ export default async function AllelePage({ params }: Params) {
   const ancestry = getAlleleAncestry(hla);
   const children = getAlleleChildren(hla);
   const siblings = getAlleleSiblings(hla);
+  const serotypes = getSerotypesForAllele(hla);
   const counts = getArticleCountsByHla();
   const years = getAlleleYearCounts(hla);
   const topArticles = getTopArticlesForAllele(hla, 6);
   const groups = groupByCategory(associations);
 
   const parent = ancestry.length >= 2 ? ancestry[ancestry.length - 2] : null;
+  // Navigation de resolution : enfants d'un 2-digit, ou freres d'un 4-digit.
+  const childSummaries =
+    allele.resolution === "2-digit" ? getAlleleChildSummaries(hla) : [];
+  const siblingSummaries =
+    allele.resolution === "4-digit" && parent
+      ? getAlleleChildSummaries(parent.hla)
+      : [];
   const nArticles = counts.get(hla) ?? 0;
   const span = activeYears(years);
   const marked = associations.filter((a) => a.isSignificant);
@@ -214,6 +226,20 @@ export default async function AllelePage({ params }: Params) {
               "."
             )}
           </p>
+          {serotypes.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-1">
+              <span className="eyebrow">
+                {serotypes.length > 1 ? "Sérotypes" : "Sérotype"}
+              </span>
+              <SerotypeBadges serotypes={serotypes} />
+              <span className="text-2xs text-fg-subtle">
+                table de correspondance de référence
+                {allele.resolution === "2-digit" && serotypes.some((s) => s.partial)
+                  ? " · « ≈ » : certains allèles du groupe seulement"
+                  : ""}
+              </span>
+            </div>
+          ) : null}
         </PageHeader>
       </div>
 
@@ -244,6 +270,14 @@ export default async function AllelePage({ params }: Params) {
           </Link>
         </p>
       </Callout>
+
+      <ResolutionNav
+        allele={allele}
+        parent={parent}
+        parentCount={parent ? (counts.get(parent.hla) ?? 0) : 0}
+        children={childSummaries}
+        siblings={siblingSummaries}
+      />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile

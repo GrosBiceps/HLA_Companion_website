@@ -13,6 +13,14 @@ export interface TreeAllele {
   nArticles: number;
   nOutcomes: number;
   nMarked: number;
+  /**
+   * Serotypes (specificites, hors familles larges) portes par l'entite ; pour
+   * un 4-digit, y compris ceux herites de son groupe. Facultatif : un
+   * referentiel serologique absent donne des listes vides.
+   */
+  serotypes?: string[];
+  /** Familles larges (A9, B5, DR2...), utilisees par le filtre seulement. */
+  broadSerotypes?: string[];
 }
 
 export interface TreeTwoDigit extends TreeAllele {
@@ -38,12 +46,8 @@ export interface AlleleTree {
   others: TreeAllele[];
 }
 
-const LOCUS_ORDER = ["A", "B", "C", "DRB1", "DQB1", "DPB1"];
-
-function locusRank(locus: string): number {
-  const i = LOCUS_ORDER.indexOf(locus);
-  return i === -1 ? LOCUS_ORDER.length : i;
-}
+import { serotypeKeys } from "./hla-query";
+import { locusRank } from "./loci";
 
 /** Tri naturel des champs d'allele : *2 avant *10, *02:01 avant *02:10. */
 export function compareAlleles(a: string, b: string): number {
@@ -61,6 +65,8 @@ export function buildAlleleTree(
     nArticles,
     nOutcomes,
     nMarked,
+    serotypes,
+    broadSerotypes,
   }: TreeAllele): TreeAllele => ({
     hla,
     locus,
@@ -69,6 +75,8 @@ export function buildAlleleTree(
     nArticles,
     nOutcomes,
     nMarked,
+    serotypes: serotypes ?? [],
+    broadSerotypes: broadSerotypes ?? [],
   });
 
   const loci = new Map<string, TreeLocus>();
@@ -141,4 +149,29 @@ export function matchesAlleleQuery(hla: string, query: string): boolean {
   const q = norm(query.trim());
   if (q.length === 0) return true;
   return norm(hla).includes(q);
+}
+
+/**
+ * Serotypes designes par une saisie (« DR15 », « dr 15 », « Cw7 », « c7 ») :
+ * leurs cles de comparaison, en majuscules. Vide si la saisie n'a pas la forme
+ * d'un serotype.
+ */
+export function serotypeQueryKeys(query: string): string[] {
+  return serotypeKeys(query.trim());
+}
+
+/**
+ * Filtre de l'index : un allele (« a*02 », « dqb1 02 01 ») OU un serotype
+ * (« DR15 », « B27 », « DR2 » pour une famille large). Un serotype ne
+ * correspond que s'il est ecrit en entier : « DR1 » ne ramene pas DR15.
+ */
+export function matchesAlleleOrSerotype(
+  entry: Pick<TreeAllele, "hla" | "serotypes" | "broadSerotypes">,
+  query: string,
+): boolean {
+  if (matchesAlleleQuery(entry.hla, query)) return true;
+  const keys = serotypeQueryKeys(query);
+  if (keys.length === 0) return false;
+  const own = [...(entry.serotypes ?? []), ...(entry.broadSerotypes ?? [])];
+  return own.some((id) => keys.includes(id.toUpperCase()));
 }

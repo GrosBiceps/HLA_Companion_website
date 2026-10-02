@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import AllelePage from "../app/allele/[hla]/page";
 import AlleleIndexPage from "../app/allele/page";
 import ComplicationIndexPage from "../app/complication/page";
@@ -169,18 +169,104 @@ describe("fiche article redessinee", () => {
 });
 
 describe("index des alleles", () => {
-  it("liste les classes, loci et alleles avec un filtre", async () => {
+  const link = (hla: string) => `a[href="/allele/${encodeURIComponent(hla)}"]`;
+
+  it("liste les classes, loci et groupes avec un filtre", async () => {
     const { container } = render(AlleleIndexPage());
     expect(container.querySelector("#classe-I")).not.toBeNull();
     expect(container.querySelector("#locus-DQB1")).not.toBeNull();
-    expect(
-      container.querySelector(
-        `a[href="/allele/${encodeURIComponent("HLA-DQB1*02:01")}"]`,
-      ),
-    ).not.toBeNull();
+    expect(container.querySelector("#locus-DRB3")).not.toBeNull();
+    expect(container.querySelector(link("HLA-DQB1*02"))).not.toBeNull();
     expect(container.querySelector('input[type="search"]')).not.toBeNull();
     const text = (container.textContent ?? "").toLowerCase();
     for (const c of CAUSAL) expect(text).not.toContain(c);
+  });
+
+  it("replie les groupes par defaut (liste de ~900 alleles legere) et les deplie a la demande", () => {
+    const { container } = render(AlleleIndexPage());
+    // aucune pastille 4-digit n'est rendue tant qu'un groupe est replie
+    expect(container.querySelector(link("HLA-DQB1*02:01"))).toBeNull();
+    expect(container.querySelectorAll('a[href^="/allele/"]').length).toBeLessThan(400);
+    const toggle = container.querySelector(
+      'button[aria-label*="HLA-DQB1*02"][aria-expanded="false"]',
+    ) as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector(link("HLA-DQB1*02:01"))).not.toBeNull();
+  });
+
+  it("filtre sur un allele : un groupe correspondant montre ses 4-digit", () => {
+    const { container } = render(AlleleIndexPage());
+    const input = container.querySelector('input[type="search"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "dqb1 02" } });
+    expect(container.querySelector(link("HLA-DQB1*02:01"))).not.toBeNull();
+    expect(container.querySelector(link("HLA-A*02"))).toBeNull();
+  });
+
+  it("filtre sur un serotype : « DR15 » montre les alleles DRB1*15 et la bande du serotype", () => {
+    const { container } = render(AlleleIndexPage());
+    const input = container.querySelector('input[type="search"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "DR15" } });
+    expect(container.querySelector(link("HLA-DRB1*15"))).not.toBeNull();
+    expect(container.querySelector(link("HLA-DRB1*15:01"))).not.toBeNull();
+    expect(container.querySelector(link("HLA-DRB1*04"))).toBeNull();
+    expect(
+      container.querySelector('a[href="/serotype/DR15"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("Sérotype DR15");
+  });
+
+  it("filtre sur un serotype fin (DR17) : seuls ses 4-digit sont montres sous leur groupe", () => {
+    const { container } = render(AlleleIndexPage());
+    const input = container.querySelector('input[type="search"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "dr 17" } });
+    expect(container.querySelector(link("HLA-DRB1*03:01"))).not.toBeNull();
+    // 03:02 est DR18, pas DR17
+    expect(container.querySelector(link("HLA-DRB1*03:02"))).toBeNull();
+  });
+});
+
+describe("fiche allele : serotypes et navigation de resolution", () => {
+  const render4 = () =>
+    renderAsync(
+      AllelePage({
+        params: Promise.resolve({ hla: encodeURIComponent("HLA-DQB1*02:01") }),
+      }),
+    );
+  const render2 = () =>
+    renderAsync(
+      AllelePage({
+        params: Promise.resolve({ hla: encodeURIComponent("HLA-DRB1*15") }),
+      }),
+    );
+
+  it("un 4-digit montre ses serotypes, son groupe parent et ses freres", async () => {
+    const { container } = await render4();
+    expect(container.querySelector('a[href="/serotype/DQ2"]')).not.toBeNull();
+    const parent = container.querySelector(
+      `a[href="/allele/${encodeURIComponent("HLA-DQB1*02")}"]`,
+    );
+    expect(parent).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label="Groupe parent et allèles voisins"]'),
+    ).not.toBeNull();
+  });
+
+  it("un 2-digit liste tous ses 4-digit avec leurs articles", async () => {
+    const { container } = await render2();
+    const nav = container.querySelector('[aria-label="Allèles 4-digit du groupe"]')!;
+    expect(nav).not.toBeNull();
+    const n = (
+      getDb()
+        .prepare("SELECT COUNT(*) AS n FROM hla_entities WHERE parent_hla = 'HLA-DRB1*15'")
+        .get() as { n: number }
+    ).n;
+    expect(n).toBeGreaterThan(5);
+    // tuiles visibles + celles repliees dans « Voir les N autres » : toutes sont liees
+    expect(nav.querySelectorAll('a[href^="/allele/HLA-DRB1*15%3A"]').length).toBe(n);
+    expect(container.querySelector('a[href="/serotype/DR15"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/serotype/DR2"]')).not.toBeNull();
   });
 });
 

@@ -310,11 +310,19 @@ import path from "node:path";
 
 describe("routage de l'explorateur de graphe", () => {
   it("les liens statiques de l'accueil menent a une page existante", () => {
-    const source = fs.readFileSync(
+    // Les liens de l'accueil vivent dans la page ET dans ses composants
+    // (portes d'entree, bandeau d'ouverture) : on lit l'ensemble.
+    const landingDir = path.join(process.cwd(), "src", "components", "landing");
+    const source = [
       path.join(process.cwd(), "src", "app", "page.tsx"),
-      "utf-8",
-    );
-    const hrefs = [...source.matchAll(/href="\/([a-zA-Z0-9_-]+)"/g)].map(
+      ...fs
+        .readdirSync(landingDir)
+        .filter((f) => f.endsWith(".tsx"))
+        .map((f) => path.join(landingDir, f)),
+    ]
+      .map((f) => fs.readFileSync(f, "utf-8"))
+      .join("\n");
+    const hrefs = [...source.matchAll(/href[=:] ?"\/([a-zA-Z0-9_-]+)"/g)].map(
       (m) => m[1],
     );
 

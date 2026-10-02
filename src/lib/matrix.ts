@@ -33,6 +33,10 @@ export interface ClientMatrixCell {
 
 export interface ClientMatrix {
   resolution: "2-digit" | "4-digit";
+  /** Locus affiche (null : tous les loci). */
+  locus?: string | null;
+  /** Loci disponibles a cette resolution, pour le selecteur. */
+  loci?: { locus: string; n: number }[];
   alleles: MatrixAllele[];
   outcomes: MatrixOutcome[];
   cells: ClientMatrixCell[];
@@ -47,6 +51,8 @@ export interface ClientMatrix {
 export function toClientMatrix(m: AssociationMatrix): ClientMatrix {
   return {
     resolution: m.resolution,
+    locus: m.locus ?? null,
+    loci: m.loci ?? [],
     alleles: m.alleles,
     outcomes: m.outcomes,
     cells: m.cells.map((c) => ({

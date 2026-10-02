@@ -1,14 +1,48 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { AlleleBreadcrumb } from "@/components/AlleleBreadcrumb";
+import { ArrowRight, Network } from "lucide-react";
 import { AssociationCard } from "@/components/AssociationCard";
 import { CATEGORIES } from "@/lib/labels";
+import { categoryClasses, categoryDisplay } from "@/lib/theme";
+import {
+  AlleleName,
+  Badge,
+  Card,
+  CardHeader,
+  Callout,
+  EmptyState,
+  HlaClassBadge,
+  LinkButton,
+  PageHeader,
+  Section,
+  StatTile,
+} from "@/components/ui";
+import {
+  AlleleBreadcrumbTrail,
+  AlleleFamily,
+} from "@/components/entity/AlleleHierarchy";
+import { ArticleSummaryList } from "@/components/entity/ArticleSummaryList";
+import { CompactAssociationList } from "@/components/entity/CompactAssociationList";
+import { OutcomeProfileChart } from "@/components/entity/OutcomeProfileChart";
+import { YearSparkline } from "@/components/entity/YearSparkline";
+import {
+  activeYears,
+  coAnchor,
+  formatInt,
+  plural,
+  yearSpan,
+} from "@/lib/format";
 import {
   getAlleleAncestry,
   getAlleleByKey,
   getAlleleChildren,
+  getAlleleSiblings,
+  getAlleleYearCounts,
+  getArticleCountsByHla,
   getAssociationsForAllele,
+  getOutcomeCount,
+  getTopArticlesForAllele,
 } from "@/lib/queries";
 import type { AssociationRow } from "@/lib/types";
 
@@ -23,19 +57,22 @@ import type { AssociationRow } from "@/lib/types";
  * sequence percent invalide (« %ZZ ») fait lever `decodeURIComponent`, ce qui
  * produirait une erreur 500 la ou un 404 est la reponse juste.
  *
- * CADRAGE. Le rappel global est monte dans `layout.tsx` — cette page le porte
- * donc meme atteinte par URL directe, sans passer par l'accueil. Elle ajoute
- * par-dessus un cadrage propre a la fiche, qui dit ce que le tri par force de
- * signal ne dit pas : que ces regroupements sont des co-mentions de termes, et
- * que la lecture passe par les phrases sources.
+ * ORDRE DE LECTURE (de l'agrege vers la source, spec § 3) :
+ *  1. en-tete : nom, classe / locus / resolution, effectif d'articles ;
+ *  2. cadrage propre a la fiche (en plus du rappel global du layout) ;
+ *  3. tuiles d'EFFECTIFS descriptifs ;
+ *  4. vue d'ensemble : profil par categorie (barres = articles, teinte =
+ *     niveau qualitatif), activite annuelle, position dans la nomenclature ;
+ *  5. les co-occurrences detaillees, groupees par categorie : cartes pour les
+ *     lignes au-dessus du seuil, lignes compactes GRISEES (jamais masquees)
+ *     pour les autres — toutes ouvrent le tiroir de phrases ;
+ *  6. les articles les plus riches en co-mentions, puis le graphe.
  *
- * REGROUPEMENT. Les associations sont groupees par categorie dans l'ordre de
- * `CATEGORIES` (ordre clinique, decide une fois pour tout le site), et a
- * l'interieur de chaque categorie dans l'ordre rendu par la requete (force de
- * signal decroissante, puis effectif). Les lignes non significatives ne sont
- * NI filtrees NI reportees en fin de liste : elles sont grisees par la carte,
- * a leur place. Une absence de signal sur une complication attendue est une
- * information, et elle se perd si on la relegue.
+ * Aucune metrique brute hors du depliant « Détail statistique » des cartes.
+ *
+ * ARTICLES DISTINCTS. `hla_entities.n_mentions` compte des lignes de
+ * mention ; l'en-tete affiche le nombre d'ARTICLES distincts, la quantite
+ * verifiable (cf. bloc « fiches enrichies » de queries.ts).
  */
 
 /** Params de route Next 16 : asynchrones. */
@@ -60,7 +97,10 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   };
 }
 
-/** Regroupe les associations par categorie, dans l'ordre de CATEGORIES. */
+/**
+ * Regroupe les associations par categorie, dans l'ordre de CATEGORIES.
+ * Une categorie inconnue est rendue en fin de page plutot que perdue.
+ */
 function groupByCategory(
   associations: AssociationRow[],
 ): { category: string; rows: AssociationRow[] }[] {
@@ -70,19 +110,31 @@ function groupByCategory(
     if (bucket) bucket.push(row);
     else groups.set(row.category, [row]);
   }
-
   const ordered: { category: string; rows: AssociationRow[] }[] = [];
   for (const category of CATEGORIES) {
     const rows = groups.get(category);
     if (rows && rows.length > 0) ordered.push({ category, rows });
     groups.delete(category);
   }
-  // Une categorie inconnue de CATEGORIES (referentiel elargi cote pipeline
-  // sans mise a jour de labels.ts) est rendue en fin de page plutot que
-  // silencieusement perdue : une complication qui disparait de l'ecran est
-  // pire qu'une categorie mal placee.
   for (const [category, rows] of groups) ordered.push({ category, rows });
   return ordered;
+}
+
+function resolutionLabel(resolution: string): string {
+  switch (resolution) {
+    case "4-digit":
+      return "Résolution 4-digit";
+    case "2-digit":
+      return "Résolution 2-digit";
+    case "class":
+      return "Niveau de nomenclature";
+    case "mismatch_count":
+      return "Compte d'incompatibilités";
+    case "eplet":
+      return "Niveau éplétique";
+    default:
+      return `Résolution ${resolution}`;
+  }
 }
 
 export default async function AllelePage({ params }: Params) {
@@ -94,127 +146,277 @@ export default async function AllelePage({ params }: Params) {
   const associations = getAssociationsForAllele(hla);
   const ancestry = getAlleleAncestry(hla);
   const children = getAlleleChildren(hla);
+  const siblings = getAlleleSiblings(hla);
+  const counts = getArticleCountsByHla();
+  const years = getAlleleYearCounts(hla);
+  const topArticles = getTopArticlesForAllele(hla, 6);
   const groups = groupByCategory(associations);
 
-  const nSignificant = associations.filter((a) => a.isSignificant).length;
+  const parent = ancestry.length >= 2 ? ancestry[ancestry.length - 2] : null;
+  const nArticles = counts.get(hla) ?? 0;
+  const span = activeYears(years);
+  const marked = associations.filter((a) => a.isSignificant);
+  const nInverse = associations.filter(
+    (a) => a.signalLevel === "inverse",
+  ).length;
+  const nOutcomesTotal = getOutcomeCount();
+  const graphHref = `/graph?center=${encodeURIComponent(hla)}`;
+  const isLocusNode = allele.resolution === "class";
 
   return (
-    <div className="space-y-6">
-      <AlleleBreadcrumb ancestry={ancestry} />
+    <div className="space-y-8 sm:space-y-10">
+      <div className="space-y-4">
+        <AlleleBreadcrumbTrail ancestry={ancestry} />
 
-      <header className="space-y-2">
-        <h1 className="text-2xl font-bold text-slate-900">{allele.hla}</h1>
-        <p className="text-sm text-slate-700">
-          Classe {allele.hlaClass}, locus {allele.locus}, résolution{" "}
-          {allele.resolution} — mentionné dans {allele.nMentions} article
-          {allele.nMentions > 1 ? "s" : ""} du corpus.
-        </p>
-      </header>
+        <PageHeader
+          eyebrow="Fiche allèle"
+          title={<AlleleName hla={allele.hla} className="font-semibold" />}
+          meta={
+            <>
+              <HlaClassBadge hlaClass={allele.hlaClass} />
+              {allele.locus !== allele.hla ? (
+                <Badge>Locus {allele.locus}</Badge>
+              ) : null}
+              <Badge>{resolutionLabel(allele.resolution)}</Badge>
+              {span ? (
+                <Badge tone="outline">
+                  {span.first === span.last
+                    ? `Mentionné en ${span.first}`
+                    : `Mentionné de ${span.first} à ${span.last}`}
+                </Badge>
+              ) : null}
+            </>
+          }
+          actions={
+            associations.length > 0 ? (
+              <LinkButton href={graphHref} variant="secondary">
+                <Network aria-hidden="true" className="h-4 w-4" />
+                Voir dans le graphe
+              </LinkButton>
+            ) : null
+          }
+        >
+          <p className="max-w-prose text-base leading-relaxed text-fg-muted">
+            Mentionné dans{" "}
+            <strong className="tabular font-semibold text-fg">
+              {plural(nArticles, "article")}
+            </strong>{" "}
+            du corpus
+            {associations.length > 0 ? (
+              <>
+                , co-mentionné avec{" "}
+                <strong className="tabular font-semibold text-fg">
+                  {plural(associations.length, "complication")}
+                </strong>{" "}
+                sur les {nOutcomesTotal} du référentiel.
+              </>
+            ) : (
+              "."
+            )}
+          </p>
+        </PageHeader>
+      </div>
 
       {/*
-        Cadrage propre a la fiche, qui s'ajoute au rappel global du layout. Il
-        porte ce que le rappel global ne peut pas dire : ce que signifie le
-        classement qui suit, sur CETTE page.
+        Cadrage propre a la fiche, qui s'ajoute au rappel global du layout : il
+        dit ce que signifient les chiffres qui suivent, sur CETTE page.
       */}
-      <section
+      <Callout
+        tone="framing"
+        title="Comment lire cette fiche"
         aria-label="Comment lire cette fiche"
-        className="rounded-md border-l-4 border-slate-900 bg-slate-100 px-4 py-3
-                   text-sm text-slate-900"
       >
         <p>
-          Chaque ligne compte des <strong>articles où l&apos;allèle et la
-          complication sont mentionnés ensemble</strong>, comparé à ce
-          qu&apos;on attendrait si les mentions étaient réparties au hasard dans
-          le texte. Un signal fort reflète souvent une mode de publication, un
-          biais d&apos;indexation ou une erreur d&apos;extraction.
+          Chaque ligne compte des{" "}
+          <strong>
+            articles où l&apos;allèle et la complication sont mentionnés
+            ensemble
+          </strong>
+          , comparé à ce qu&apos;on attendrait si les mentions étaient réparties
+          au hasard dans le texte. Un signal fort reflète souvent une mode de
+          publication, un biais d&apos;indexation ou une erreur
+          d&apos;extraction.
         </p>
-        <p className="mt-1">
+        <p>
           Toute lecture clinique exige de relire les phrases sources.{" "}
-          <Link
-            href="/methodologie"
-            className="font-medium underline underline-offset-2
-                       hover:text-slate-600"
-          >
+          <Link href="/methode" className="link font-medium">
             Méthodologie
           </Link>
         </p>
-      </section>
+      </Callout>
 
-      <section aria-label="Complications co-mentionnées" className="space-y-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
-          Complications co-mentionnées ({associations.length})
-        </h2>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile
+          label="Articles"
+          value={formatInt(nArticles)}
+          hint="mentionnant cette forme"
+        />
+        <StatTile
+          label="Complications"
+          value={
+            <>
+              {associations.length}
+              <span className="text-base font-normal text-fg-subtle">
+                {" "}
+                / {nOutcomesTotal}
+              </span>
+            </>
+          }
+          hint="co-mentionnées au moins une fois"
+        />
+        <StatTile
+          label="Au-dessus du seuil"
+          value={marked.length}
+          hint={
+            nInverse > 0
+              ? `dont ${nInverse} en signal inverse`
+              : "co-occurrences marquées"
+          }
+        />
+        <StatTile
+          label="Période"
+          value={yearSpan(span?.first, span?.last) ?? "—"}
+          hint="première et dernière mention"
+        />
+      </div>
 
-        {associations.length === 0 ? (
-          <p className="rounded-md border border-slate-300 bg-white px-4 py-3
-                        text-sm text-slate-700">
-            Aucune complication n&apos;est co-mentionnée avec cet allèle dans ce
-            corpus. Ce n&apos;est pas un résultat sur la clinique : c&apos;est
-            l&apos;état de la littérature indexée telle qu&apos;elle a été
-            extraite.
-          </p>
-        ) : (
-          <>
-            <p className="text-xs text-slate-600">
-              {nSignificant} ligne{nSignificant > 1 ? "s" : ""} au-dessus du
-              seuil statistique du corpus, {associations.length - nSignificant}{" "}
-              en dessous. Les secondes restent affichées, grisées : une absence
-              de signal est une information.
-            </p>
-
-            {groups.map(({ category, rows }) => (
-              <div key={category} className="space-y-3">
-                <h3 className="border-b border-slate-200 pb-1 text-sm
-                               font-semibold text-slate-900">
-                  {category}{" "}
-                  <span className="font-normal text-slate-500">
-                    ({rows.length})
-                  </span>
-                </h3>
-                <div className="space-y-3">
-                  {rows.map((row) => (
-                    <AssociationCard
-                      key={`${row.hla}:${row.outcome}`}
-                      association={row}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </>
-        )}
-      </section>
-
-      {children.length > 0 ? (
-        <section aria-label="Allèles de résolution plus fine" className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide
-                         text-slate-700">
-            Résolution plus fine
-          </h2>
-          <p className="text-xs text-slate-600">
-            Ces allèles comptent leurs propres articles : les chiffres ci-dessus
-            ne s&apos;y reportent pas tels quels.
-          </p>
-          <ul className="flex flex-wrap gap-2">
-            {children.map((child) => (
-              <li key={child.hla}>
-                <Link
-                  href={`/allele/${encodeURIComponent(child.hla)}`}
-                  className="inline-block rounded border border-slate-300
-                             bg-white px-3 py-1 text-sm text-slate-900
-                             hover:border-slate-800 hover:bg-slate-50"
-                >
-                  {child.hla}{" "}
-                  <span className="text-xs text-slate-500">
-                    ({child.nMentions})
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {isLocusNode && children.length > 0 ? (
+        <Card>
+          <CardHeader
+            eyebrow="Nomenclature"
+            title="Ce nœud regroupe des allèles"
+            description="Les co-occurrences sont comptées au niveau de chaque allèle : ouvrez l'un d'eux."
+          />
+          <div className="mt-4">
+            <AlleleFamily
+              allele={allele}
+              parent={parent}
+              siblings={[]}
+              children={children}
+              counts={counts}
+            />
+          </div>
+        </Card>
       ) : null}
+
+      {associations.length === 0 ? (
+        <EmptyState
+          title="Aucune complication co-mentionnée"
+          description="Aucune complication n'est co-mentionnée avec cette entité dans ce corpus. Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée telle qu'elle a été extraite."
+        />
+      ) : (
+        <>
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+            <Card>
+              <CardHeader
+                eyebrow="Vue d'ensemble"
+                title="Complications co-mentionnées, par catégorie"
+                description="Longueur : nombre d'articles. Teinte : niveau de signal. Une ligne mène à sa carte détaillée."
+              />
+              <div className="mt-5">
+                <OutcomeProfileChart groups={groups} />
+              </div>
+            </Card>
+
+            <div className="space-y-6">
+              <Card>
+                <CardHeader eyebrow="Chronologie" title="Articles par année" />
+                <div className="mt-4">
+                  <YearSparkline series={years} />
+                </div>
+                <p className="mt-3 text-2xs leading-relaxed text-fg-subtle">
+                  Le corpus entier grossit d&apos;année en année : une pente
+                  montante peut ne refléter que cette croissance.
+                </p>
+              </Card>
+              <Card>
+                <CardHeader eyebrow="Nomenclature" title="Allèles voisins" />
+                <div className="mt-4">
+                  <AlleleFamily
+                    allele={allele}
+                    parent={parent}
+                    siblings={siblings}
+                    children={children}
+                    counts={counts}
+                  />
+                </div>
+              </Card>
+            </div>
+          </div>
+
+          <Section
+            title={`Co-occurrences détaillées (${associations.length})`}
+            aria-label="Complications co-mentionnées"
+            description={`${marked.length} au-dessus du seuil statistique du corpus, en cartes ; ${
+              associations.length - marked.length
+            } en dessous, en lignes grisées. Une absence de signal est une information : rien n'est masqué.`}
+          >
+            <div className="space-y-8">
+              {groups.map(({ category, rows }) => {
+                const strong = rows.filter((r) => r.isSignificant);
+                const weak = rows.filter((r) => !r.isSignificant);
+                return (
+                  <div key={category} className="space-y-3">
+                    <h3 className="flex items-center gap-2 border-b border-line pb-2 text-sm font-semibold text-fg">
+                      <span
+                        aria-hidden="true"
+                        className={`h-2.5 w-2.5 rounded-[3px] ${categoryClasses(category).bg}`}
+                      />
+                      {categoryDisplay(category)}{" "}
+                      <span className="font-normal text-fg-subtle">
+                        ({rows.length})
+                      </span>
+                    </h3>
+                    {strong.map((row) => (
+                      <div
+                        key={row.outcome}
+                        id={coAnchor(row.outcome)}
+                        className="scroll-mt-40"
+                      >
+                        <AssociationCard association={row} />
+                      </div>
+                    ))}
+                    {weak.length > 0 ? (
+                      <CompactAssociationList rows={weak} show="outcome" />
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </Section>
+
+          {topArticles.length > 0 ? (
+            <Section
+              title="Articles les plus riches en co-mentions"
+              description="Classés par nombre de phrases où cet allèle apparaît avec une complication. Chaque fiche article montre ces phrases, surlignées."
+            >
+              <ArticleSummaryList
+                articles={topArticles}
+                partnerUnit="complication"
+              />
+            </Section>
+          ) : null}
+
+          <Card
+            tone="muted"
+            className="flex flex-wrap items-center justify-between gap-4"
+          >
+            <div className="min-w-0 space-y-1">
+              <p className="font-serif text-lg font-semibold text-fg">
+                Explorer le voisinage de <AlleleName hla={allele.hla} />
+              </p>
+              <p className="text-sm text-fg-muted">
+                Le graphe part de cet allèle et s&apos;étend, de proche en
+                proche, aux complications puis aux autres allèles co-mentionnés.
+              </p>
+            </div>
+            <LinkButton href={graphHref} variant="primary">
+              Ouvrir le graphe
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            </LinkButton>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

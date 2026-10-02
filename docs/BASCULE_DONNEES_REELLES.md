@@ -275,7 +275,7 @@ Recherche effectuée sur `src/` et `scripts/` :
 | `src/lib/db.ts:30` | défaut `dist/corpus_A_synthetic.sqlite` | ✅ **À traiter** — définir `CORPUS_DB_PATH` ou changer le défaut |
 | `src/lib/extraction-metrics.ts:50` | `measuredAgainstCorpus: "A-synthetic"` | ✅ **À traiter** — voir ci-dessous |
 | `src/app/page.tsx:8` | `SHOWCASE_ALLELE = "HLA-DQB1*02:01"` | ✅ **À traiter** — voir ci-dessous |
-| `scripts/gen_synthetic.py:218` | `SHOWCASE_HLA` | ⚪ Générateur synthétique uniquement — sans effet sur le build réel |
+| `scripts/gen_synthetic.py:440` | `SHOWCASE_HLA` | ⚪ Générateur synthétique uniquement — sans effet sur le build réel |
 | `scripts/build_sqlite.py:592-597` | défauts `data/synthetic`, `A-synthetic` | ⚪ Neutralisés en passant les arguments explicitement (§3) |
 
 Les nombreuses occurrences de `HLA-DQB1*02:01` dans les **commentaires** (`db.ts`,

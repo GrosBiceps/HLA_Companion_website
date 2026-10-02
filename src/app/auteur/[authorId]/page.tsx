@@ -1,16 +1,35 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { ChevronRight, Info } from "lucide-react";
+import {
+  AlleleName,
+  Callout,
+  Card,
+  CardHeader,
+  EmptyState,
+  PageHeader,
+  Section,
+  StatTile,
+} from "@/components/ui";
+import { BarList } from "@/components/entity/BarList";
+import { YearSparkline } from "@/components/entity/YearSparkline";
+import { categoryColor, hlaClassColor } from "@/lib/theme";
+import { formatInt, plural, yearSpan } from "@/lib/format";
 import {
   getAuthor,
   getAuthorInterests,
   getAuthorPublications,
+  getAuthorshipRoles,
   getCoAuthors,
+  getCorpusYearRange,
+  type YearCount,
 } from "@/lib/queries";
+import type { Article } from "@/lib/types";
 
 /**
  * Fiche auteur — fonctionnalite secondaire du site : partant d'un auteur,
- * remonter ses publications et ses centres d'interet.
+ * remonter ses publications et son profil thematique.
  *
  * ⚠ LA RESERVE SUR L'HOMONYMIE EST OBLIGATOIRE, ET ELLE EST SOUS LE NOM.
  *
@@ -31,11 +50,13 @@ import {
  * son libelle exact est verrouille par un test
  * (`src/__tests__/author-page.test.tsx`). Ne pas la reformuler.
  *
+ * PROFIL THEMATIQUE = EFFECTIFS DESCRIPTIFS. Les barres comptent des
+ * articles de cet auteur ou l'entite est mentionnee. Ce n'est ni une
+ * specialite declaree ni une mesure d'association.
+ *
  * TRAJECTOIRE. Le corpus ne porte ni affiliation ni date par institution :
- * rien ne permet de tracer une trajectoire de carriere. On affiche donc
- * seulement ce qui est reellement derivable — l'etendue des annees de
- * publication — plutot que de fabriquer une narration a partir de donnees
- * absentes.
+ * on n'affiche que ce qui est derivable — publications par annee, position
+ * de signature — plutot que de fabriquer une narration.
  */
 
 /** Libelle exact impose par la spec. NE PAS REFORMULER. */
@@ -64,6 +85,30 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   };
 }
 
+/** Serie annuelle dense des publications, sur les bornes du corpus. */
+function yearSeries(publications: Article[]): YearCount[] {
+  const range = getCorpusYearRange();
+  if (!range) return [];
+  const counts = new Map<number, number>();
+  for (const p of publications)
+    counts.set(p.year, (counts.get(p.year) ?? 0) + 1);
+  const out: YearCount[] = [];
+  for (let y = range.min; y <= range.max; y++)
+    out.push({ year: y, n: counts.get(y) ?? 0 });
+  return out;
+}
+
+/** Publications groupees par annee, de la plus recente a la plus ancienne. */
+function byYear(publications: Article[]): { year: number; items: Article[] }[] {
+  const groups: { year: number; items: Article[] }[] = [];
+  for (const p of publications) {
+    const last = groups[groups.length - 1];
+    if (last && last.year === p.year) last.items.push(p);
+    else groups.push({ year: p.year, items: [p] });
+  }
+  return groups;
+}
+
 export default async function AuthorPage({ params }: Params) {
   const authorId = safeDecode((await params).authorId);
 
@@ -73,41 +118,41 @@ export default async function AuthorPage({ params }: Params) {
   const publications = getAuthorPublications(authorId);
   const interests = getAuthorInterests(authorId);
   const coAuthors = getCoAuthors(authorId);
+  const roles = getAuthorshipRoles(authorId);
 
   const years = publications.map((p) => p.year);
   const yearMin = years.length > 0 ? Math.min(...years) : null;
   const yearMax = years.length > 0 ? Math.max(...years) : null;
 
-  // On n'affiche pas les listes entieres : un auteur prolifique du corpus
-  // porte des dizaines d'entites. Le haut de la distribution suffit a dire
-  // « sur quoi publie-t-il », le reste est atteignable par ses articles.
-  const topHla = interests.hla.slice(0, 10);
-  const topOutcomes = interests.outcomes.slice(0, 10);
+  // Le haut de la distribution suffit a dire « sur quoi publie-t-il » ; le
+  // reste est atteignable par ses articles.
+  const topHla = interests.hla
+    .filter(
+      (i) =>
+        i.entity.resolution === "2-digit" || i.entity.resolution === "4-digit",
+    )
+    .slice(0, 8);
+  const topOutcomes = interests.outcomes.slice(0, 8);
+  const topCo = coAuthors.slice(0, 10);
+  const otherCo = coAuthors.slice(10);
+  const nPub = publications.length;
 
   return (
-    <div className="space-y-6">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-bold text-slate-900">
-          {author.displayName}
-        </h1>
-
+    <div className="space-y-8 sm:space-y-10">
+      <PageHeader eyebrow="Fiche auteur" title={author.displayName}>
         {/*
           LA RESERVE. Directement sous le nom, avant tout chiffre : elle doit
           etre lue avant la donnee qu'elle qualifie, pas apres.
         */}
         <p
           role="note"
-          className="flex items-start gap-2 rounded-md border-l-4
-                     border-amber-600 bg-amber-50 px-3 py-2 text-sm
-                     text-amber-950"
+          className="flex max-w-prose items-start gap-2 rounded-lg border-l-[3px] border-warn bg-warn-soft px-3 py-2 text-sm text-warn-soft-fg"
         >
-          <span aria-hidden="true">ⓘ</span>
+          <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{HOMONYM_RESERVATION}</span>
         </p>
-
-        <p className="text-sm text-slate-700">
-          {publications.length} publication
-          {publications.length > 1 ? "s" : ""} dans le corpus
+        <p className="text-base text-fg-muted">
+          {nPub} publication{nPub > 1 ? "s" : ""} dans le corpus
           {yearMin !== null && yearMax !== null
             ? yearMin === yearMax
               ? ` (${yearMin})`
@@ -115,12 +160,12 @@ export default async function AuthorPage({ params }: Params) {
             : ""}
           .
         </p>
-      </header>
+      </PageHeader>
 
-      <section
+      <Callout
+        tone="framing"
+        title="Comment lire cette fiche"
         aria-label="Comment lire cette fiche"
-        className="rounded-md border-l-4 border-slate-900 bg-slate-100 px-4 py-3
-                   text-sm text-slate-900"
       >
         <p>
           Cette fiche décrit ce que <strong>le corpus indexé attribue</strong> à
@@ -128,130 +173,274 @@ export default async function AuthorPage({ params }: Params) {
           Les thèmes ci-dessous comptent des articles, pas des travaux
           revendiqués.
         </p>
-      </section>
+      </Callout>
 
-      <section aria-label="Centres d'intérêt" className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
-          Centres d&apos;intérêt
-        </h2>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile
+          label="Publications"
+          value={formatInt(nPub)}
+          hint="dans le corpus indexé"
+        />
+        <StatTile
+          label="Période"
+          value={yearSpan(yearMin, yearMax) ?? "—"}
+          hint="première et dernière publication"
+        />
+        <StatTile
+          label="Co-auteurs"
+          value={formatInt(coAuthors.length)}
+          hint="noms distincts sur ses articles"
+        />
+        <StatTile
+          label="Premier / dernier"
+          value={
+            <>
+              {roles.first}
+              <span className="text-base font-normal text-fg-subtle"> / </span>
+              {roles.last}
+            </>
+          }
+          hint="position de signature"
+        />
+      </div>
 
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader eyebrow="Chronologie" title="Publications par année" />
+          <div className="mt-4">
+            <YearSparkline
+              series={yearSeries(publications)}
+              unit="publication"
+            />
+          </div>
+        </Card>
+        <Card>
+          <CardHeader eyebrow="Signature" title="Position dans les auteurs" />
+          {nPub > 0 ? (
+            <>
+              <div
+                aria-hidden="true"
+                className="mt-5 flex h-3 gap-[2px] overflow-hidden rounded-full"
+              >
+                {[
+                  { n: roles.first, cls: "bg-primary" },
+                  { n: roles.middle, cls: "bg-primary/35" },
+                  { n: roles.last, cls: "bg-accent" },
+                ]
+                  .filter((s) => s.n > 0)
+                  .map((s, i) => (
+                    <span key={i} className={s.cls} style={{ flexGrow: s.n }} />
+                  ))}
+              </div>
+              <ul className="mt-3 space-y-1 text-xs text-fg-muted">
+                <li className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 rounded-sm bg-primary"
+                  />
+                  Premier auteur{" "}
+                  <span className="tabular ml-auto text-fg">{roles.first}</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 rounded-sm bg-primary/35"
+                  />
+                  Position intermédiaire{" "}
+                  <span className="tabular ml-auto text-fg">
+                    {roles.middle}
+                  </span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 rounded-sm bg-accent"
+                  />
+                  Dernier auteur{" "}
+                  <span className="tabular ml-auto text-fg">{roles.last}</span>
+                </li>
+              </ul>
+            </>
+          ) : null}
+        </Card>
+      </div>
+
+      <Section
+        title="Profil thématique"
+        aria-label="Centres d'intérêt"
+        description="Entités les plus souvent présentes dans ses articles, en nombre d'articles. Un décompte descriptif : ni une spécialité, ni une mesure d'association."
+      >
         {topHla.length === 0 && topOutcomes.length === 0 ? (
-          <p className="rounded-md border border-slate-300 bg-white px-4 py-3
-                        text-sm text-slate-700">
-            Aucune entité HLA ni complication n&apos;a été extraite des articles
-            rattachés à ce nom.
-          </p>
+          <EmptyState
+            title="Aucune entité extraite"
+            description="Aucune entité HLA ni complication n'a été extraite des articles rattachés à ce nom."
+          />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {topHla.length > 0 ? (
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-900">
-                  Allèles récurrents
-                </h3>
-                <ul className="space-y-1">
-                  {topHla.map(({ entity, nArticles }) => (
-                    <li key={entity.hla} className="text-sm">
-                      <Link
-                        href={`/allele/${encodeURIComponent(entity.hla)}`}
-                        className="text-slate-900 underline underline-offset-2
-                                   hover:text-slate-600"
-                      >
-                        {entity.hla}
-                      </Link>{" "}
-                      <span className="text-slate-500">
-                        ({nArticles} article{nArticles > 1 ? "s" : ""})
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {topOutcomes.length > 0 ? (
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-900">
-                  Complications récurrentes
-                </h3>
-                {/* Libelle clinique de la base, jamais la cle technique. */}
-                <ul className="space-y-1">
-                  {topOutcomes.map(({ entity, nArticles }) => (
-                    <li key={entity.outcome} className="text-sm">
-                      <Link
-                        href={`/complication/${encodeURIComponent(entity.outcome)}`}
-                        className="text-slate-900 underline underline-offset-2
-                                   hover:text-slate-600"
-                      >
-                        {entity.label}
-                      </Link>{" "}
-                      <span className="text-slate-500">
-                        ({nArticles} article{nArticles > 1 ? "s" : ""})
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+          <div className="grid gap-6 md:grid-cols-2">
+            <Card>
+              <CardHeader title="Allèles les plus présents" />
+              {topHla.length > 0 ? (
+                <BarList
+                  className="mt-4"
+                  unit="art."
+                  max={nPub}
+                  items={topHla.map(({ entity, nArticles }) => ({
+                    key: entity.hla,
+                    href: `/allele/${encodeURIComponent(entity.hla)}`,
+                    label: <AlleleName hla={entity.hla} />,
+                    value: nArticles,
+                    color: hlaClassColor(entity.hlaClass).css,
+                    dot: hlaClassColor(entity.hlaClass).css,
+                    title: `${entity.hla} — classe ${entity.hlaClass}`,
+                  }))}
+                />
+              ) : (
+                <p className="mt-3 text-sm text-fg-muted">
+                  Aucun allèle extrait.
+                </p>
+              )}
+              <p className="mt-4 flex gap-4 text-2xs text-fg-subtle">
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: hlaClassColor("I").css }}
+                  />
+                  Classe I
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: hlaClassColor("II").css }}
+                  />
+                  Classe II
+                </span>
+                <span className="ml-auto">
+                  échelle : ses {plural(nPub, "publication")}
+                </span>
+              </p>
+            </Card>
+            <Card>
+              <CardHeader title="Complications les plus présentes" />
+              {topOutcomes.length > 0 ? (
+                <BarList
+                  className="mt-4"
+                  unit="art."
+                  max={nPub}
+                  items={topOutcomes.map(({ entity, nArticles }) => ({
+                    key: entity.outcome,
+                    href: `/complication/${encodeURIComponent(entity.outcome)}`,
+                    // Libelle clinique de la base, jamais la cle technique.
+                    label: entity.label,
+                    value: nArticles,
+                    color: categoryColor(entity.category).css,
+                    dot: categoryColor(entity.category).css,
+                  }))}
+                />
+              ) : (
+                <p className="mt-3 text-sm text-fg-muted">
+                  Aucune complication extraite.
+                </p>
+              )}
+              <p className="mt-4 text-right text-2xs text-fg-subtle">
+                pastille : catégorie clinique · échelle : ses{" "}
+                {plural(nPub, "publication")}
+              </p>
+            </Card>
           </div>
         )}
-      </section>
+      </Section>
 
-      <section aria-label="Publications" className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
-          Publications ({publications.length})
-        </h2>
-        <ul className="space-y-2">
-          {publications.map((article) => (
-            <li
-              key={article.pmid}
-              className="rounded-md border border-slate-200 bg-white px-4 py-3"
-            >
-              <Link
-                href={`/article/${encodeURIComponent(article.pmid)}`}
-                className="text-sm font-medium text-slate-900 underline
-                           underline-offset-2 hover:text-slate-600"
-              >
-                {article.title}
-              </Link>
-              <p className="mt-1 text-xs text-slate-600">
-                {article.journal ?? article.journalAbbrev ?? "Revue non renseignée"}{" "}
-                · {article.year}
-              </p>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {coAuthors.length > 0 ? (
-        <section aria-label="Co-auteurs" className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide
-                         text-slate-700">
-            Co-auteurs ({coAuthors.length})
-          </h2>
-          <p className="text-xs text-slate-600">
-            Noms apparaissant sur les mêmes articles. La même réserve
-            d&apos;homonymie s&apos;applique à chacun d&apos;eux.
-          </p>
-          <ul className="flex flex-wrap gap-2">
-            {coAuthors.map((co) => (
-              <li key={co.authorId}>
-                <Link
-                  href={`/auteur/${encodeURIComponent(co.authorId)}`}
-                  className="inline-block rounded border border-slate-300
-                             bg-white px-3 py-1 text-sm text-slate-900
-                             hover:border-slate-800 hover:bg-slate-50"
-                >
-                  {co.displayName}{" "}
-                  <span className="text-xs text-slate-500">
-                    ({co.nSharedArticles})
-                  </span>
-                </Link>
-              </li>
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <Section title={`Publications (${nPub})`} aria-label="Publications">
+          <div className="space-y-5">
+            {byYear(publications).map(({ year, items }) => (
+              <div key={year} className="grid grid-cols-[3.25rem_1fr] gap-3">
+                <p className="tabular pt-3 font-serif text-lg font-semibold text-fg-subtle">
+                  {year}
+                </p>
+                <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface shadow-xs">
+                  {items.map((article) => (
+                    <li key={article.pmid} className="px-4 py-3">
+                      <Link
+                        href={`/article/${encodeURIComponent(article.pmid)}`}
+                        className="text-sm font-medium leading-snug text-fg hover:text-primary hover:underline hover:decoration-primary/40 hover:underline-offset-[3px]"
+                      >
+                        {article.title}
+                      </Link>
+                      <p className="mt-1 text-xs text-fg-muted">
+                        <span className="italic">
+                          {article.journal ??
+                            article.journalAbbrev ??
+                            "Revue non renseignée"}
+                        </span>{" "}
+                        ·{" "}
+                        <span className="allele text-fg-subtle">
+                          PMID {article.pmid}
+                        </span>
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
-        </section>
-      ) : null}
+          </div>
+        </Section>
+
+        {coAuthors.length > 0 ? (
+          <Section
+            title={`Co-auteurs (${coAuthors.length})`}
+            aria-label="Co-auteurs"
+          >
+            <Card>
+              <p className="text-xs text-fg-muted">
+                Noms apparaissant sur les mêmes articles, par nombre
+                d&apos;articles partagés. La même réserve d&apos;homonymie
+                s&apos;applique à chacun d&apos;eux.
+              </p>
+              <BarList
+                className="mt-4"
+                unit="art."
+                items={topCo.map((co) => ({
+                  key: co.authorId,
+                  href: `/auteur/${encodeURIComponent(co.authorId)}`,
+                  label: co.displayName,
+                  value: co.nSharedArticles,
+                }))}
+              />
+              {otherCo.length > 0 ? (
+                <details className="group mt-4 border-t border-line pt-3">
+                  <summary className="inline-flex cursor-pointer select-none items-center gap-1 text-xs font-medium text-fg-muted hover:text-fg">
+                    <ChevronRight
+                      aria-hidden="true"
+                      className="h-3.5 w-3.5 transition-transform group-open:rotate-90"
+                    />
+                    {otherCo.length} autre{otherCo.length > 1 ? "s" : ""}{" "}
+                    co-auteur
+                    {otherCo.length > 1 ? "s" : ""}
+                  </summary>
+                  <ul className="mt-3 flex flex-wrap gap-1.5">
+                    {otherCo.map((co) => (
+                      <li key={co.authorId}>
+                        <Link
+                          href={`/auteur/${encodeURIComponent(co.authorId)}`}
+                          className="inline-flex items-center gap-1 rounded-md bg-surface-muted px-2 py-0.5 text-xs text-fg ring-1 ring-inset ring-line hover:ring-line-strong"
+                        >
+                          {co.displayName}
+                          <span className="tabular text-fg-subtle">
+                            {co.nSharedArticles}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </Card>
+          </Section>
+        ) : null}
+      </div>
     </div>
   );
 }

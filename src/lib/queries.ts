@@ -10,15 +10,21 @@
  */
 
 import { getDb } from "./db";
+import { CATEGORIES } from "./labels";
 import type {
   Article,
+  AssociationMatrix,
+  AssociationMatrixCell,
   AssociationRow,
   Author,
   EntityType,
   HlaEntity,
   Outcome,
+  MatrixAllele,
+  MatrixOutcome,
   PairMention,
   Polarity,
+  PublicationsPerYear,
   SearchHit,
   SignalLevel,
 } from "./types";
@@ -314,9 +320,25 @@ export function getAuthor(authorId: string): Author | null {
 export interface CorpusStats {
   nArticles: number;
   nOutcomes: number;
+  /** Toutes les entites HLA, noeuds de hierarchie compris (classe, locus). */
   nAlleles: number;
   yearMin: number | null;
   yearMax: number | null;
+  /** Alleles de resolution 2-digit (« HLA-A*02 »). */
+  nAlleles2Digit: number;
+  /** Alleles de resolution 4-digit (« HLA-A*02:01 »). */
+  nAlleles4Digit: number;
+  /** Entites HLA par resolution (`2-digit`, `4-digit`, `class`, ...). */
+  allelesByResolution: Record<string, number>;
+  nAuthors: number;
+  nJournals: number;
+  nCountries: number;
+  /** Phrases sources (mentions de paire) indexees. */
+  nPairMentions: number;
+  /** Paires (allele, complication) co-citees au moins une fois. */
+  nAssociations: number;
+  /** Associations par niveau de signal ; les 5 niveaux sont toujours presents. */
+  associationsBySignal: Record<SignalLevel, number>;
 }
 
 /**
@@ -349,12 +371,66 @@ export function getCorpusStats(): CorpusStats {
     .prepare(`SELECT COUNT(*) AS n FROM hla_entities`)
     .get() as { n: number };
 
+  // Extension (vues d'ensemble) : memes principes, tout est compte dans la
+  // base rendue, rien n'est declare.
+  const allelesByResolution: Record<string, number> = {};
+  for (const row of db
+    .prepare(
+      `SELECT resolution, COUNT(*) AS n FROM hla_entities
+        GROUP BY resolution ORDER BY resolution`,
+    )
+    .all() as { resolution: string; n: number }[]) {
+    allelesByResolution[row.resolution] = row.n;
+  }
+
+  const sources = db
+    .prepare(
+      `SELECT COUNT(DISTINCT journal) AS n_journals,
+              COUNT(DISTINCT country) AS n_countries
+         FROM articles`,
+    )
+    .get() as { n_journals: number; n_countries: number };
+
+  const authors = db
+    .prepare(`SELECT COUNT(*) AS n FROM authors`)
+    .get() as { n: number };
+
+  const mentions = db
+    .prepare(`SELECT COUNT(*) AS n FROM pair_mentions`)
+    .get() as { n: number };
+
+  const associationsBySignal: Record<SignalLevel, number> = {
+    inverse: 0,
+    strong: 0,
+    clear: 0,
+    moderate: 0,
+    weak: 0,
+  };
+  let nAssociations = 0;
+  for (const row of db
+    .prepare(
+      `SELECT signal_level, COUNT(*) AS n FROM associations GROUP BY signal_level`,
+    )
+    .all() as { signal_level: SignalLevel; n: number }[]) {
+    associationsBySignal[row.signal_level] = row.n;
+    nAssociations += row.n;
+  }
+
   return {
     nArticles: articles.n,
     nOutcomes: outcomes.n,
     nAlleles: alleles.n,
     yearMin: articles.year_min,
     yearMax: articles.year_max,
+    nAlleles2Digit: allelesByResolution["2-digit"] ?? 0,
+    nAlleles4Digit: allelesByResolution["4-digit"] ?? 0,
+    allelesByResolution,
+    nAuthors: authors.n,
+    nJournals: sources.n_journals,
+    nCountries: sources.n_countries,
+    nPairMentions: mentions.n,
+    nAssociations,
+    associationsBySignal,
   };
 }
 
@@ -738,10 +814,11 @@ export interface Neighborhood {
  * « hairball » : au-dela de quelques dizaines de noeuds un graphe de
  * co-occurrence ne se lit plus, il se contemple. 150 est la limite retenue.
  *
- * Le corpus A synthetique sature a 54 noeuds a profondeur 5 : le plafond n'y
- * est jamais atteint. Il est neanmoins implemente et teste (cf.
+ * Le corpus synthetique elargi (3 000 articles, ~170 noeuds atteignables)
+ * DEPASSE le plafond des la profondeur 2 : la troncature y est donc exercee
+ * en conditions reelles. Elle reste testee directement (cf.
  * `truncateBySignal`, exportee pour ca) parce que c'est une garantie sur le
- * comportement du code, pas sur ce corpus-ci.
+ * comportement du code, pas sur un corpus particulier.
  */
 export const GRAPH_NODE_CAP = 150;
 
@@ -823,8 +900,8 @@ function resolveCenter(centerId: string): GraphNode | null {
 /**
  * Tronque un ensemble de noeuds au plafond, PAR FORCE DE SIGNAL DECROISSANTE.
  *
- * Exportee pour etre testable directement : le corpus A ne permet pas
- * d'atteindre 150 noeuds, la garantie serait donc sinon invérifiable.
+ * Exportee pour etre testable directement, independamment de la taille du
+ * corpus rendu.
  *
  * Regles de coupe, dans l'ordre :
  *  1. le centre (distance 0) n'est jamais coupe ;
@@ -1053,4 +1130,791 @@ export function getDefaultGraphCenter(): string | null {
     )
     .get() as { hla: string } | undefined;
   return row?.hla ?? null;
+}
+
+// --------------------------------------------------------------------------
+// Vues d'ensemble pour les visualisations : matrice, chronologie, compteurs.
+//
+// AJOUT PUR, meme regle que les taches precedentes. Ces fonctions servent des
+// vues globales (heatmap, histogramme) : elles lisent des tables deja
+// agregees par le builder et restent bon marche (quelques ms sur le corpus
+// synthetique de 3 000 articles).
+// --------------------------------------------------------------------------
+
+/** Ordre des loci dans la matrice : classe I puis classe II. */
+const LOCUS_ORDER = ["A", "B", "C", "DRB1", "DQB1", "DPB1"];
+
+/**
+ * Matrice HLA x complication au niveau de resolution demande (2-digit par
+ * defaut), pour une heatmap ou une vue en grille.
+ *
+ * - `alleles` : TOUTES les entites de la resolution, meme sans association
+ *   (une ligne vide est une information : l'allele n'est jamais co-cite) ;
+ * - `outcomes` : toutes les complications de la table `outcomes`, dans
+ *   l'ordre clinique `CATEGORIES`, libelle clinique joint ;
+ * - `cells` : matrice CREUSE, une case par ligne de `associations`. Rien
+ *   n'est filtre (le non significatif et les negations y sont), conformement
+ *   aux regles du projet.
+ *
+ * `npmi` est fourni pour l'encodage visuel ; l'interface ne doit pas
+ * l'afficher en clair par defaut (cf. regle epistemique).
+ */
+export function getAssociationMatrix(
+  resolution: "2-digit" | "4-digit" = "2-digit",
+): AssociationMatrix {
+  const db = getDb();
+
+  const locusCase = `CASE h.locus ${LOCUS_ORDER.map(
+    (l, i) => `WHEN '${l}' THEN ${i}`,
+  ).join(" ")} ELSE ${LOCUS_ORDER.length} END`;
+  const categoryCase = `CASE o.category ${CATEGORIES.map(
+    (c, i) => `WHEN '${c}' THEN ${i}`,
+  ).join(" ")} ELSE ${CATEGORIES.length} END`;
+
+  const alleles = (
+    db
+      .prepare(
+        `SELECT h.hla, h.locus, h.hla_class, h.n_mentions
+           FROM hla_entities h
+          WHERE h.resolution = ?
+          ORDER BY h.hla_class ASC, ${locusCase}, h.hla ASC`,
+      )
+      .all(resolution) as {
+      hla: string;
+      locus: string;
+      hla_class: string;
+      n_mentions: number;
+    }[]
+  ).map(
+    (row): MatrixAllele => ({
+      hla: row.hla,
+      locus: row.locus,
+      hlaClass: row.hla_class,
+      nMentions: row.n_mentions,
+    }),
+  );
+
+  const outcomes = (
+    db
+      .prepare(
+        `SELECT o.outcome, o.label, o.category, o.n_mentions
+           FROM outcomes o
+          ORDER BY ${categoryCase}, o.label ASC`,
+      )
+      .all() as OutcomeSqlRow[]
+  ).map(
+    (row): MatrixOutcome => ({
+      outcome: row.outcome,
+      label: row.label,
+      category: row.category,
+      nMentions: row.n_mentions,
+    }),
+  );
+
+  const cells = (
+    db
+      .prepare(
+        `SELECT a.hla, a.outcome, a.signal_level, a.is_significant,
+                a.n_cooccurrence, a.n_negated, a.npmi
+           FROM associations a
+           JOIN hla_entities h ON h.hla = a.hla
+          WHERE h.resolution = ?
+          ORDER BY a.hla ASC, a.outcome ASC`,
+      )
+      .all(resolution) as {
+      hla: string;
+      outcome: string;
+      signal_level: SignalLevel;
+      is_significant: number;
+      n_cooccurrence: number;
+      n_negated: number;
+      npmi: number | null;
+    }[]
+  ).map(
+    (row): AssociationMatrixCell => ({
+      hla: row.hla,
+      outcome: row.outcome,
+      signalLevel: row.signal_level,
+      isSignificant: row.is_significant === 1,
+      nCooccurrence: row.n_cooccurrence,
+      nNegated: row.n_negated,
+      npmi: row.npmi,
+    }),
+  );
+
+  return { resolution, alleles, outcomes, cells };
+}
+
+/**
+ * Nombre d'articles par annee de publication, en ordre croissant, SANS TROU :
+ * une annee sans article entre la premiere et la derniere vaut 0 (un
+ * histogramme ne doit pas sauter d'annee silencieusement).
+ *
+ * Compte depuis `articles` (contenu reellement present), comme
+ * `getCorpusStats`, plutot que depuis une valeur declaree.
+ */
+export function getPublicationsByYear(): PublicationsPerYear[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT year, COUNT(*) AS n FROM articles GROUP BY year ORDER BY year`,
+    )
+    .all() as { year: number; n: number }[];
+  if (rows.length === 0) return [];
+
+  const byYear = new Map(rows.map((r) => [r.year, r.n]));
+  const out: PublicationsPerYear[] = [];
+  for (let y = rows[0].year; y <= rows[rows.length - 1].year; y++) {
+    out.push({ year: y, nArticles: byYear.get(y) ?? 0 });
+  }
+  return out;
+}
+
+// ==========================================================================
+// ACCUEIL (landing) — AJOUT PUR, bloc delimite.
+//
+// Requetes en lecture seule pour la page d'accueil : vitrine des signaux les
+// plus marques, apercu par locus, catalogue des complications par categorie,
+// auteurs les plus publies. Aucune ne renvoie de metrique brute (NPMI, OR,
+// FDR) : l'accueil n'affiche que des niveaux qualitatifs et des effectifs
+// verifiables. Testees dans `src/__tests__/landing-queries.test.ts`.
+// ==========================================================================
+
+/** Paire (allele, complication) mise en avant sur l'accueil. */
+export interface SignalHighlight {
+  hla: string;
+  locus: string;
+  hlaClass: string;
+  resolution: string;
+  outcome: string;
+  /** Libelle AFFICHABLE (table `outcomes`), jamais la cle technique. */
+  label: string;
+  category: string;
+  signalLevel: SignalLevel;
+  /** Phrases sources (= effectif verifiable de la paire). */
+  nCooccurrence: number;
+  nNegated: number;
+}
+
+/**
+ * Paires aux niveaux de signal demandes (fort et net par defaut), limitees
+ * aux ALLELES (2-digit et 4-digit) : les entites agregees (`HLA-mismatch`,
+ * `HLA-eplet`) ne sont pas des alleles et n'ont pas leur place dans une
+ * vitrine « allele → complication ».
+ *
+ * Tri : ordre de `levels`, puis effectif decroissant, puis cles (stable).
+ */
+export function getSignalHighlights({
+  levels = ["strong", "clear"],
+  resolutions = ["2-digit", "4-digit"],
+  limit = 12,
+}: {
+  levels?: SignalLevel[];
+  resolutions?: ("2-digit" | "4-digit")[];
+  limit?: number;
+} = {}): SignalHighlight[] {
+  if (levels.length === 0 || resolutions.length === 0 || limit <= 0) return [];
+  const levelOrder = `CASE a.signal_level ${levels
+    .map((_, i) => `WHEN ? THEN ${i}`)
+    .join(" ")} ELSE ${levels.length} END`;
+  const rows = getDb()
+    .prepare(
+      `SELECT a.hla, h.locus, h.hla_class, h.resolution,
+              a.outcome, o.label, o.category,
+              a.signal_level, a.n_cooccurrence, a.n_negated
+         FROM associations a
+         JOIN hla_entities h ON h.hla = a.hla
+         JOIN outcomes o ON o.outcome = a.outcome
+        WHERE a.signal_level IN (${levels.map(() => "?").join(", ")})
+          AND h.resolution IN (${resolutions.map(() => "?").join(", ")})
+        ORDER BY ${levelOrder}, a.n_cooccurrence DESC, a.hla ASC, a.outcome ASC
+        LIMIT ?`,
+    )
+    .all(...levels, ...resolutions, ...levels, limit) as {
+    hla: string;
+    locus: string;
+    hla_class: string;
+    resolution: string;
+    outcome: string;
+    label: string;
+    category: string;
+    signal_level: SignalLevel;
+    n_cooccurrence: number;
+    n_negated: number;
+  }[];
+  return rows.map((r) => ({
+    hla: r.hla,
+    locus: r.locus,
+    hlaClass: r.hla_class,
+    resolution: r.resolution,
+    outcome: r.outcome,
+    label: r.label,
+    category: r.category,
+    signalLevel: r.signal_level,
+    nCooccurrence: r.n_cooccurrence,
+    nNegated: r.n_negated,
+  }));
+}
+
+/** Apercu d'un locus HLA pour les points d'entree de l'accueil. */
+export interface LocusOverview {
+  locus: string;
+  hlaClass: string;
+  nAlleles2Digit: number;
+  nAlleles4Digit: number;
+  /** Alleles (2 ou 4-digit) les plus mentionnes du locus. */
+  topAlleles: { hla: string; resolution: string; nMentions: number }[];
+}
+
+/**
+ * Loci dans l'ordre A, B, C, DRB1, DQB1, DPB1 (classe I puis II), avec leurs
+ * `perLocus` alleles les plus mentionnes, toutes resolutions alleliques
+ * confondues. Seuls les loci portant au moins un allele sont rendus.
+ */
+export function getLocusOverview(perLocus = 3): LocusOverview[] {
+  const db = getDb();
+  const loci = db
+    .prepare(
+      `SELECT locus, hla_class,
+              SUM(resolution = '2-digit') AS n2,
+              SUM(resolution = '4-digit') AS n4
+         FROM hla_entities
+        WHERE resolution IN ('2-digit', '4-digit')
+        GROUP BY locus, hla_class`,
+    )
+    .all() as { locus: string; hla_class: string; n2: number; n4: number }[];
+  const top = db.prepare(
+    `SELECT hla, resolution, n_mentions FROM hla_entities
+      WHERE locus = ? AND resolution IN ('2-digit', '4-digit')
+      ORDER BY n_mentions DESC, hla ASC LIMIT ?`,
+  );
+  const rank = (l: string) => {
+    const i = LOCUS_ORDER.indexOf(l);
+    return i === -1 ? LOCUS_ORDER.length : i;
+  };
+  return loci
+    .sort((a, b) => rank(a.locus) - rank(b.locus) || a.locus.localeCompare(b.locus))
+    .map((l) => ({
+      locus: l.locus,
+      hlaClass: l.hla_class,
+      nAlleles2Digit: l.n2,
+      nAlleles4Digit: l.n4,
+      topAlleles: (
+        top.all(l.locus, perLocus) as {
+          hla: string;
+          resolution: string;
+          n_mentions: number;
+        }[]
+      ).map((r) => ({ hla: r.hla, resolution: r.resolution, nMentions: r.n_mentions })),
+    }));
+}
+
+/** Une categorie clinique et ses complications, pour l'accueil. */
+export interface CategoryOverview {
+  category: string;
+  /** Somme des mentions des complications de la categorie. */
+  nMentions: number;
+  outcomes: { outcome: string; label: string; nMentions: number }[];
+}
+
+/**
+ * Complications regroupees par categorie, dans l'ordre clinique
+ * `CATEGORIES` ; a l'interieur, par mentions decroissantes. Libelles joints
+ * depuis `outcomes` — jamais la cle technique.
+ */
+export function getOutcomesByCategory(): CategoryOverview[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT outcome, label, category, n_mentions FROM outcomes
+        ORDER BY n_mentions DESC, label ASC`,
+    )
+    .all() as OutcomeSqlRow[];
+  const byCat = new Map<string, CategoryOverview>();
+  for (const r of rows) {
+    let entry = byCat.get(r.category);
+    if (!entry) {
+      entry = { category: r.category, nMentions: 0, outcomes: [] };
+      byCat.set(r.category, entry);
+    }
+    entry.nMentions += r.n_mentions;
+    entry.outcomes.push({ outcome: r.outcome, label: r.label, nMentions: r.n_mentions });
+  }
+  const rank = (c: string) => {
+    const i = (CATEGORIES as readonly string[]).indexOf(c);
+    return i === -1 ? CATEGORIES.length : i;
+  };
+  return [...byCat.values()].sort(
+    (a, b) => rank(a.category) - rank(b.category) || a.category.localeCompare(b.category),
+  );
+}
+
+/** Auteurs les plus publies du corpus (effectif descriptif). */
+export function getTopAuthors(limit = 6): Author[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT author_id, display_name, n_publications FROM authors
+        ORDER BY n_publications DESC, display_name ASC LIMIT ?`,
+    )
+    .all(limit) as {
+    author_id: string;
+    display_name: string;
+    n_publications: number;
+  }[];
+  return rows.map((r) => ({
+    authorId: r.author_id,
+    displayName: r.display_name,
+    nPublications: r.n_publications,
+  }));
+}
+
+// ==========================================================================
+// FICHES ENRICHIES — allele, complication, article, auteur, index.
+//
+// BLOC AJOUTE EN FIN DE FICHIER (AJOUT PUR) : rien au-dessus n'est modifie.
+// Toutes ces fonctions sont en LECTURE SEULE et ne renvoient que des
+// EFFECTIFS DESCRIPTIFS (articles, annees, phrases) ou des niveaux de signal
+// qualitatifs : aucune metrique d'association (NPMI, OR, FDR) n'en sort.
+// Teste dans `src/__tests__/entity-queries.test.ts`.
+//
+// ⚠ ARTICLES DISTINCTS, PAS MENTIONS. `hla_entities.n_mentions` compte des
+// LIGNES de mention (un article peut citer un allele dans plusieurs phrases).
+// Les fiches affichent « N articles » : ces helpers comptent donc
+// `COUNT(DISTINCT pmid)`, la seule quantite qu'un lecteur peut verifier.
+// ==========================================================================
+
+/** Effectif d'une annee (articles distincts). */
+export interface YearCount {
+  year: number;
+  n: number;
+}
+
+/** Bornes d'annees du corpus rendu (memes bornes pour toutes les series). */
+export function getCorpusYearRange(): { min: number; max: number } | null {
+  const row = getDb()
+    .prepare(`SELECT MIN(year) AS min, MAX(year) AS max FROM articles`)
+    .get() as { min: number | null; max: number | null };
+  if (row.min === null || row.max === null) return null;
+  return { min: row.min, max: row.max };
+}
+
+/**
+ * Densifie une serie annuelle sur les bornes du corpus : une annee sans
+ * article vaut 0 (une sparkline ne doit pas sauter d'annee en silence), et
+ * toutes les series d'une fiche partagent le meme axe.
+ */
+function densifyYears(rows: { year: number; n: number }[]): YearCount[] {
+  const range = getCorpusYearRange();
+  if (!range) return [];
+  const byYear = new Map(rows.map((r) => [r.year, r.n]));
+  const out: YearCount[] = [];
+  for (let y = range.min; y <= range.max; y++) {
+    out.push({ year: y, n: byYear.get(y) ?? 0 });
+  }
+  return out;
+}
+
+/** Articles distincts mentionnant l'allele, par annee (serie dense). */
+export function getAlleleYearCounts(hla: string): YearCount[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT ar.year AS year, COUNT(DISTINCT hm.pmid) AS n
+         FROM hla_mentions hm
+         JOIN articles ar ON ar.pmid = hm.pmid
+        WHERE hm.hla = ?
+        GROUP BY ar.year`,
+    )
+    .all(hla) as { year: number; n: number }[];
+  return densifyYears(rows);
+}
+
+/** Articles distincts mentionnant la complication, par annee (serie dense). */
+export function getOutcomeYearCounts(outcome: string): YearCount[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT ar.year AS year, COUNT(DISTINCT om.pmid) AS n
+         FROM outcome_mentions om
+         JOIN articles ar ON ar.pmid = om.pmid
+        WHERE om.outcome = ?
+        GROUP BY ar.year`,
+    )
+    .all(outcome) as { year: number; n: number }[];
+  return densifyYears(rows);
+}
+
+/** Nombre d'articles distincts mentionnant un allele (0 si inconnu). */
+export function getAlleleArticleCount(hla: string): number {
+  const row = getDb()
+    .prepare(`SELECT COUNT(DISTINCT pmid) AS n FROM hla_mentions WHERE hla = ?`)
+    .get(hla) as { n: number };
+  return row.n;
+}
+
+/** Nombre d'articles distincts mentionnant une complication. */
+export function getOutcomeArticleCount(outcome: string): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(DISTINCT pmid) AS n FROM outcome_mentions WHERE outcome = ?`,
+    )
+    .get(outcome) as { n: number };
+  return row.n;
+}
+
+/** Articles distincts par entite HLA, pour toutes les entites mentionnees. */
+export function getArticleCountsByHla(): Map<string, number> {
+  const rows = getDb()
+    .prepare(
+      `SELECT hla, COUNT(DISTINCT pmid) AS n FROM hla_mentions GROUP BY hla`,
+    )
+    .all() as { hla: string; n: number }[];
+  return new Map(rows.map((r) => [r.hla, r.n]));
+}
+
+/** Taille du referentiel de complications (calculee, jamais ecrite en dur). */
+export function getOutcomeCount(): number {
+  return (getDb().prepare(`SELECT COUNT(*) AS n FROM outcomes`).get() as { n: number }).n;
+}
+
+/** Toutes les entites HLA (154 lignes) — referentiel pour regrouper. */
+export function getAllHlaEntities(): HlaEntity[] {
+  const rows = getDb()
+    .prepare(`SELECT ${HLA_COLUMNS} FROM hla_entities ORDER BY hla ASC`)
+    .all() as HlaEntityRow[];
+  return rows.map(toHlaEntity);
+}
+
+/**
+ * Alleles « freres » : meme parent, meme niveau, l'allele lui-meme exclu.
+ * Vide pour une entite sans parent (classe, `HLA-mismatch`...).
+ */
+export function getAlleleSiblings(hla: string): HlaEntity[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT ${HLA_COLUMNS}
+         FROM hla_entities
+        WHERE parent_hla = (SELECT parent_hla FROM hla_entities WHERE hla = ?)
+          AND hla <> ?
+        ORDER BY hla ASC`,
+    )
+    .all(hla, hla) as HlaEntityRow[];
+  return rows.map(toHlaEntity);
+}
+
+/** Article resume pour une liste « articles les plus riches en co-mentions ». */
+export interface ArticleSummary {
+  pmid: string;
+  title: string;
+  year: number;
+  journal: string | null;
+  citedBy: number | null;
+  /** Premier auteur (ordre de signature), ou null si aucun auteur. */
+  firstAuthor: string | null;
+  nAuthors: number;
+  /** Phrases de co-mention de CETTE entite dans l'article. */
+  nSentences: number;
+  /** Dont phrases au sens negatif. */
+  nNegated: number;
+  /** Partenaires distincts (complications pour un allele, et inversement). */
+  nPartners: number;
+}
+
+interface ArticleSummarySqlRow {
+  pmid: string;
+  title: string;
+  year: number;
+  journal: string | null;
+  cited_by: number | null;
+  first_author: string | null;
+  n_authors: number;
+  n_sentences: number;
+  n_negated: number;
+  n_partners: number;
+}
+
+/**
+ * Articles portant le plus de phrases de co-mention pour une entite. Tri :
+ * phrases decroissantes, puis citations, puis annee recente, puis PMID —
+ * deterministe. `column` est un nom de colonne FIXE (jamais une saisie).
+ */
+function topArticles(
+  column: "hla" | "outcome",
+  key: string,
+  limit: number,
+): ArticleSummary[] {
+  const partner = column === "hla" ? "outcome" : "hla";
+  const rows = getDb()
+    .prepare(
+      `WITH per_article AS (
+         SELECT pm.pmid,
+                COUNT(*) AS n_sentences,
+                SUM(CASE WHEN pm.polarity = 'negated' THEN 1 ELSE 0 END)
+                  AS n_negated,
+                COUNT(DISTINCT pm.${partner}) AS n_partners
+           FROM pair_mentions pm
+          WHERE pm.${column} = ?
+          GROUP BY pm.pmid
+       )
+       SELECT ar.pmid, ar.title, ar.year, ar.journal, ar.cited_by,
+              pa.n_sentences, pa.n_negated, pa.n_partners,
+              (SELECT au.display_name
+                 FROM article_authors aa
+                 JOIN authors au ON au.author_id = aa.author_id
+                WHERE aa.pmid = ar.pmid
+                ORDER BY aa.position ASC LIMIT 1) AS first_author,
+              (SELECT COUNT(*) FROM article_authors aa
+                WHERE aa.pmid = ar.pmid) AS n_authors
+         FROM per_article pa
+         JOIN articles ar ON ar.pmid = pa.pmid
+        ORDER BY pa.n_sentences DESC, COALESCE(ar.cited_by, 0) DESC,
+                 ar.year DESC, ar.pmid ASC
+        LIMIT ?`,
+    )
+    .all(key, limit) as ArticleSummarySqlRow[];
+  return rows.map((row) => ({
+    pmid: row.pmid,
+    title: row.title,
+    year: row.year,
+    journal: row.journal,
+    citedBy: row.cited_by,
+    firstAuthor: row.first_author,
+    nAuthors: row.n_authors,
+    nSentences: row.n_sentences,
+    nNegated: row.n_negated,
+    nPartners: row.n_partners,
+  }));
+}
+
+export function getTopArticlesForAllele(
+  hla: string,
+  limit = 8,
+): ArticleSummary[] {
+  return topArticles("hla", hla, limit);
+}
+
+export function getTopArticlesForOutcome(
+  outcome: string,
+  limit = 8,
+): ArticleSummary[] {
+  return topArticles("outcome", outcome, limit);
+}
+
+/** Entree du catalogue des alleles (page `/allele`). */
+export interface AlleleCatalogEntry extends HlaEntity {
+  /** Articles distincts mentionnant l'entite. */
+  nArticles: number;
+  /** Complications co-mentionnees au moins une fois. */
+  nOutcomes: number;
+  /** Dont co-occurrences au-dessus du seuil (tout niveau sauf `weak`). */
+  nMarked: number;
+}
+
+/**
+ * Catalogue complet des entites HLA avec leurs effectifs. Une requete par
+ * agregat (mentions, associations), jointes en memoire : 154 lignes.
+ */
+export function getAlleleCatalog(): AlleleCatalogEntry[] {
+  const articles = getArticleCountsByHla();
+  const assoc = new Map(
+    (
+      getDb()
+        .prepare(
+          `SELECT hla, COUNT(*) AS n,
+                  SUM(CASE WHEN signal_level <> 'weak' THEN 1 ELSE 0 END)
+                    AS n_marked
+             FROM associations GROUP BY hla`,
+        )
+        .all() as { hla: string; n: number; n_marked: number }[]
+    ).map((r) => [r.hla, r]),
+  );
+  return getAllHlaEntities().map((entity) => ({
+    ...entity,
+    nArticles: articles.get(entity.hla) ?? 0,
+    nOutcomes: assoc.get(entity.hla)?.n ?? 0,
+    nMarked: assoc.get(entity.hla)?.n_marked ?? 0,
+  }));
+}
+
+/** Allele mis en avant sur une carte de complication. */
+export interface TopAllele {
+  hla: string;
+  signalLevel: SignalLevel;
+  nCooccurrence: number;
+}
+
+/** Entree du catalogue des complications (page `/complication`). */
+export interface OutcomeCatalogEntry extends Outcome {
+  nArticles: number;
+  /** Alleles co-mentionnes au moins une fois. */
+  nAlleles: number;
+  /** Dont co-occurrences au-dessus du seuil (tout niveau sauf `weak`). */
+  nMarked: number;
+  /** Les plus marques d'abord (ordre du site), puis effectif. */
+  topAlleles: TopAllele[];
+}
+
+/**
+ * Catalogue des complications : libelle clinique, effectifs, et les
+ * alleles les plus fortement co-mentionnes (au-dessus du seuil uniquement :
+ * un allele au signal faible n'est pas « marque »). Seules les resolutions
+ * alleliques (2-digit, 4-digit) sont proposees en tete : `HLA-mismatch`
+ * n'est pas un allele et brouillerait la lecture d'une carte de synthese.
+ */
+export function getOutcomeCatalog(topN = 3): OutcomeCatalogEntry[] {
+  const db = getDb();
+  const categoryCase = `CASE o.category ${CATEGORIES.map(
+    (c, i) => `WHEN '${c}' THEN ${i}`,
+  ).join(" ")} ELSE ${CATEGORIES.length} END`;
+
+  const outcomes = db
+    .prepare(
+      `SELECT o.outcome, o.label, o.category, o.n_mentions,
+              (SELECT COUNT(DISTINCT om.pmid) FROM outcome_mentions om
+                WHERE om.outcome = o.outcome) AS n_articles,
+              (SELECT COUNT(*) FROM associations a
+                WHERE a.outcome = o.outcome) AS n_alleles,
+              (SELECT COUNT(*) FROM associations a
+                WHERE a.outcome = o.outcome AND a.signal_level <> 'weak')
+                AS n_marked
+         FROM outcomes o
+        ORDER BY ${categoryCase}, o.label ASC`,
+    )
+    .all() as (OutcomeSqlRow & {
+    n_articles: number;
+    n_alleles: number;
+    n_marked: number;
+  })[];
+
+  const topStmt = db.prepare(
+    `SELECT a.hla, a.signal_level, a.n_cooccurrence
+       FROM associations a
+       JOIN hla_entities h ON h.hla = a.hla
+      WHERE a.outcome = ? AND h.resolution IN ('2-digit', '4-digit')
+        AND a.signal_level <> 'weak'
+      ORDER BY ${SIGNAL_ORDER_SQL}, a.n_cooccurrence DESC, a.hla ASC
+      LIMIT ?`,
+  );
+
+  return outcomes.map((row) => ({
+    outcome: row.outcome,
+    label: row.label,
+    category: row.category,
+    nMentions: row.n_mentions,
+    nArticles: row.n_articles,
+    nAlleles: row.n_alleles,
+    nMarked: row.n_marked,
+    topAlleles: (
+      topStmt.all(row.outcome, topN) as {
+        hla: string;
+        signal_level: SignalLevel;
+        n_cooccurrence: number;
+      }[]
+    ).map((t) => ({
+      hla: t.hla,
+      signalLevel: t.signal_level,
+      nCooccurrence: t.n_cooccurrence,
+    })),
+  }));
+}
+
+/** Entites reperees par l'extraction dans un article (surlignage). */
+export interface ArticleEntities {
+  hla: { hla: string; spans: string[]; nMentions: number }[];
+  outcomes: {
+    outcome: string;
+    label: string;
+    category: string;
+    spans: string[];
+    nMentions: number;
+    nNegated: number;
+  }[];
+}
+
+/**
+ * Entites reperees dans UN article (mentions simples, pas seulement les
+ * paires), avec leurs segments textuels distincts — pour surligner le titre
+ * et le resume. Libelle clinique joint depuis `outcomes`.
+ */
+export function getArticleEntities(pmid: string): ArticleEntities {
+  const db = getDb();
+  const hlaRows = db
+    .prepare(
+      `SELECT hla, span, COUNT(*) AS n
+         FROM hla_mentions WHERE pmid = ?
+        GROUP BY hla, span ORDER BY hla ASC, span ASC`,
+    )
+    .all(pmid) as { hla: string; span: string | null; n: number }[];
+  const outRows = db
+    .prepare(
+      `SELECT om.outcome, o.label, o.category, om.span,
+              COUNT(*) AS n, SUM(om.negated) AS n_neg
+         FROM outcome_mentions om
+         JOIN outcomes o ON o.outcome = om.outcome
+        WHERE om.pmid = ?
+        GROUP BY om.outcome, om.span
+        ORDER BY o.label ASC, om.span ASC`,
+    )
+    .all(pmid) as {
+    outcome: string;
+    label: string;
+    category: string;
+    span: string | null;
+    n: number;
+    n_neg: number | null;
+  }[];
+
+  const hla = new Map<string, ArticleEntities["hla"][number]>();
+  for (const r of hlaRows) {
+    const e = hla.get(r.hla) ?? { hla: r.hla, spans: [], nMentions: 0 };
+    if (r.span && !e.spans.includes(r.span)) e.spans.push(r.span);
+    e.nMentions += r.n;
+    hla.set(r.hla, e);
+  }
+  const outcomes = new Map<string, ArticleEntities["outcomes"][number]>();
+  for (const r of outRows) {
+    const e = outcomes.get(r.outcome) ?? {
+      outcome: r.outcome,
+      label: r.label,
+      category: r.category,
+      spans: [],
+      nMentions: 0,
+      nNegated: 0,
+    };
+    if (r.span && !e.spans.includes(r.span)) e.spans.push(r.span);
+    e.nMentions += r.n;
+    e.nNegated += r.n_neg ?? 0;
+    outcomes.set(r.outcome, e);
+  }
+  return { hla: [...hla.values()], outcomes: [...outcomes.values()] };
+}
+
+/** Positions de signature d'un auteur sur ses articles (descriptif). */
+export interface AuthorshipRoles {
+  first: number;
+  last: number;
+  middle: number;
+}
+
+/**
+ * Premier, dernier, intermediaire. Un article a auteur unique compte comme
+ * « premier ».
+ */
+export function getAuthorshipRoles(authorId: string): AuthorshipRoles {
+  const row = getDb()
+    .prepare(
+      `SELECT SUM(CASE WHEN aa.position = 1 THEN 1 ELSE 0 END) AS first,
+              SUM(CASE WHEN aa.position <> 1 AND aa.is_last = 1
+                       THEN 1 ELSE 0 END) AS last,
+              SUM(CASE WHEN aa.position <> 1 AND aa.is_last = 0
+                       THEN 1 ELSE 0 END) AS middle
+         FROM article_authors aa
+        WHERE aa.author_id = ?`,
+    )
+    .get(authorId) as {
+    first: number | null;
+    last: number | null;
+    middle: number | null;
+  };
+  return {
+    first: row.first ?? 0,
+    last: row.last ?? 0,
+    middle: row.middle ?? 0,
+  };
 }

@@ -1,0 +1,285 @@
+import Link from "next/link";
+import { ArrowRight, Dna, Sparkles, Stethoscope, UserRound } from "lucide-react";
+import { SignalIndicator } from "@/components/SignalIndicator";
+import { AlleleName, HlaClassBadge, LinkButton } from "@/components/ui";
+import { cn } from "@/lib/cn";
+import type { CategoryOverview, LocusOverview } from "@/lib/queries";
+import { categoryClasses, categoryDisplay, hlaClassColor } from "@/lib/theme";
+import type { AssociationRow, Author, HlaEntity } from "@/lib/types";
+import { NUMBER_FORMAT, plural } from "./constellation";
+
+function PanelHeader({
+  icon,
+  eyebrow,
+  title,
+  href,
+  hrefLabel,
+}: {
+  icon: React.ReactNode;
+  eyebrow: string;
+  title: string;
+  href?: string;
+  hrefLabel?: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <span
+          aria-hidden="true"
+          className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-soft text-primary [&>svg]:h-[18px] [&>svg]:w-[18px]"
+        >
+          {icon}
+        </span>
+        <div>
+          <p className="eyebrow">{eyebrow}</p>
+          <h3 className="font-semibold text-fg">{title}</h3>
+        </div>
+      </div>
+      {href ? (
+        <Link href={href} className="link inline-flex items-center gap-1 text-sm">
+          {hrefLabel}
+          <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" />
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+/** Par allele : loci groupes par classe HLA, alleles les plus cites. */
+function ByAllele({ loci }: { loci: LocusOverview[] }) {
+  const classes = ["I", "II"].map((c) => ({
+    hlaClass: c,
+    loci: loci.filter((l) => l.hlaClass === c),
+  }));
+  return (
+    <div className="flex flex-col gap-5 rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
+      <PanelHeader
+        icon={<Dna />}
+        eyebrow="Par allèle"
+        title="Six loci, deux classes"
+        href="/allele"
+        hrefLabel="Tous les allèles"
+      />
+      {classes.map(({ hlaClass, loci: group }) =>
+        group.length === 0 ? null : (
+          <div key={hlaClass} className="space-y-2">
+            <HlaClassBadge hlaClass={hlaClass} />
+            <ul className="divide-y divide-line">
+              {group.map((l) => (
+                <li
+                  key={l.locus}
+                  className="grid grid-cols-[4.75rem_minmax(0,1fr)] items-baseline gap-3 py-2.5 sm:grid-cols-[6.5rem_minmax(0,1fr)]"
+                >
+                  <div>
+                    <p className="flex items-center gap-1.5 font-mono text-sm font-semibold text-fg">
+                      <span
+                        aria-hidden="true"
+                        className="h-2 w-2 rounded-full"
+                        style={{ background: hlaClassColor(l.hlaClass).css }}
+                      />
+                      {l.locus}
+                    </p>
+                    <p className="text-2xs text-fg-subtle">
+                      {plural(l.nAlleles2Digit + l.nAlleles4Digit, "allèle")}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {l.topAlleles.map((a) => (
+                      <Link
+                        key={a.hla}
+                        href={`/allele/${encodeURIComponent(a.hla)}`}
+                        className="inline-flex items-center rounded-md border border-line bg-surface-muted px-2 py-0.5 text-xs text-fg transition hover:border-primary/50 hover:bg-primary-soft hover:text-primary-soft-fg"
+                      >
+                        <AlleleName hla={a.hla} />
+                      </Link>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** Par complication : 7 categories cliniques, chacune avec ses complications. */
+function ByComplication({ categories }: { categories: CategoryOverview[] }) {
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
+      <PanelHeader
+        icon={<Stethoscope />}
+        eyebrow="Par complication"
+        title={`${categories.length} catégories cliniques`}
+        href="/complication"
+        hrefLabel="Toutes les complications"
+      />
+      <ul className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
+        {categories.map((c) => (
+          <li key={c.category} className="space-y-1.5">
+            <p className="flex items-center gap-2 text-sm font-semibold text-fg">
+              <span
+                aria-hidden="true"
+                className={cn("h-2.5 w-2.5 rounded-full", categoryClasses(c.category).bg)}
+              />
+              {categoryDisplay(c.category)}
+              <span className="tabular text-2xs font-normal text-fg-subtle">
+                {NUMBER_FORMAT.format(c.nMentions)} mentions
+              </span>
+            </p>
+            <ul className="flex flex-wrap gap-1.5 pl-[1.125rem]">
+              {c.outcomes.map((o) => (
+                <li key={o.outcome}>
+                  <Link
+                    href={`/complication/${encodeURIComponent(o.outcome)}`}
+                    className="inline-block rounded-md px-1.5 py-0.5 text-xs text-fg-muted ring-1 ring-inset ring-line transition hover:bg-primary-soft hover:text-primary-soft-fg hover:ring-primary/30"
+                  >
+                    {o.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Fiche vitrine : l'allele de demonstration et ses premieres paires. */
+function Showcase({
+  allele,
+  top,
+  total,
+}: {
+  allele: HlaEntity;
+  top: AssociationRow[];
+  total: number;
+}) {
+  const href = `/allele/${encodeURIComponent(allele.hla)}`;
+  return (
+    <div className="relative flex flex-col gap-4 overflow-hidden rounded-xl border border-primary/25 bg-primary-soft/50 p-4 shadow-card sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1.5">
+          <p className="eyebrow flex items-center gap-1.5 text-primary">
+            <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+            Fiche vitrine
+          </p>
+          <p className="font-serif text-2xl font-semibold tracking-tight text-fg sm:text-[1.75rem]">
+            <AlleleName hla={allele.hla} />
+          </p>
+          <p className="text-sm text-fg-muted">
+            {plural(allele.nMentions, "mention")} · {plural(total, "complication co-mentionnée", "complications co-mentionnées")}
+          </p>
+        </div>
+        <HlaClassBadge hlaClass={allele.hlaClass} />
+      </div>
+      <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
+        {top.map((a) => (
+          <li
+            key={a.outcome}
+            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2.5"
+          >
+            <span className="flex min-w-0 items-center gap-2 text-sm text-fg">
+              <span
+                aria-hidden="true"
+                className={cn("h-2 w-2 shrink-0 rounded-full", categoryClasses(a.category).bg)}
+              />
+              <span className="truncate">{a.label}</span>
+            </span>
+            <span className="flex items-center gap-3">
+              <span className="tabular text-xs text-fg-subtle">
+                {plural(a.nCooccurrence, "article")}
+              </span>
+              <SignalIndicator level={a.signalLevel} />
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center gap-3">
+        <LinkButton href={href} variant="primary">
+          Ouvrir la fiche et ses phrases
+          <ArrowRight aria-hidden="true" className="h-4 w-4" />
+        </LinkButton>
+        <LinkButton href={`/graph?center=${encodeURIComponent(allele.hla)}`} variant="ghost">
+          Voir dans le graphe
+        </LinkButton>
+      </div>
+    </div>
+  );
+}
+
+/** Par auteur : les auteurs les plus publies du corpus. */
+function ByAuthor({ authors, synthetic }: { authors: Author[]; synthetic: boolean }) {
+  const max = Math.max(1, ...authors.map((a) => a.nPublications));
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
+      <PanelHeader icon={<UserRound />} eyebrow="Par auteur" title="Les plus publiés du corpus" />
+      <ol className="space-y-2.5">
+        {authors.map((a, i) => (
+          <li key={a.authorId}>
+            <Link
+              href={`/auteur/${encodeURIComponent(a.authorId)}`}
+              className="group grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-3"
+            >
+              <span className="tabular text-xs text-fg-subtle">{i + 1}</span>
+              <span className="min-w-0 space-y-1">
+                <span className="block truncate text-sm font-medium text-fg group-hover:text-primary">
+                  {a.displayName}
+                </span>
+                <span aria-hidden="true" className="block h-1 rounded-full bg-surface-sunken">
+                  <span
+                    className="block h-1 rounded-full bg-primary/60"
+                    style={{ width: `${(100 * a.nPublications) / max}%` }}
+                  />
+                </span>
+              </span>
+              <span className="tabular text-xs text-fg-muted">
+                {plural(a.nPublications, "article")}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ol>
+      {synthetic ? (
+        <p className="mt-auto text-2xs leading-snug text-fg-subtle">
+          Noms fictifs, générés pour le jeu de démonstration.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Points d'entree : par allele (loci groupes par classe), par complication
+ * (7 categories), fiche vitrine, par auteur.
+ */
+export function EntryPoints({
+  loci,
+  categories,
+  authors,
+  showcase,
+  synthetic,
+}: {
+  loci: LocusOverview[];
+  categories: CategoryOverview[];
+  authors: Author[];
+  showcase: { allele: HlaEntity; top: AssociationRow[]; total: number } | null;
+  synthetic: boolean;
+}) {
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <ByAllele loci={loci} />
+        <ByComplication categories={categories} />
+      </div>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        {showcase ? (
+          <Showcase allele={showcase.allele} top={showcase.top} total={showcase.total} />
+        ) : null}
+        <ByAuthor authors={authors} synthetic={synthetic} />
+      </div>
+    </div>
+  );
+}

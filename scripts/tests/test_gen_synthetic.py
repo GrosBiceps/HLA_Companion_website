@@ -268,5 +268,93 @@ class TestAssociationCoherence(unittest.TestCase):
                 )
 
 
+class TestDefaultCorpusLandscape(unittest.TestCase):
+    """Le jeu par defaut (3 000 articles) doit offrir un paysage exploitable.
+
+    Ces garanties portent sur ce que l'interface doit pouvoir DEMONTRER :
+    chaque niveau de signal, chaque complication, des auteurs prolifiques,
+    une hierarchie HLA riche. Elles verifient la taille par defaut, celle
+    qui est reellement construite et deployee.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from labels import compute_signal_level
+
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.out = Path(cls.tmp.name)
+        gen_synthetic.main(out_dir=cls.out, seed=42)
+        cls.assoc = read_csv(cls.out / "associations.csv")
+        cls.articles = read_csv(cls.out / "articles.csv")
+        cls.hla = read_csv(cls.out / "hla_entities.csv")
+        cls.authors = read_csv(cls.out / "authors.csv")
+        cls.level = {
+            (r["hla"], r["outcome"]): compute_signal_level(
+                int(r["n_cooccurrence"]), float(r["fdr"]),
+                float(r["odds_ratio"]), float(r["fdr_two_sided"]),
+            )
+            for r in cls.assoc
+        }
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_default_size(self):
+        self.assertEqual(len(self.articles), gen_synthetic.DEFAULT_N_ARTICLES)
+        self.assertGreaterEqual(gen_synthetic.DEFAULT_N_ARTICLES, 2000)
+
+    def test_vocabulary_is_rich(self):
+        from collections import Counter
+
+        by_res = Counter(r["resolution"] for r in self.hla)
+        self.assertGreaterEqual(by_res["2-digit"], 35)
+        self.assertLessEqual(by_res["2-digit"], 50)
+        self.assertGreaterEqual(by_res["4-digit"], 60)
+        self.assertLessEqual(by_res["4-digit"], 100)
+        keys = {r["hla"] for r in self.hla}
+        self.assertIn(gen_synthetic.SHOWCASE_HLA, keys)
+
+    def test_every_outcome_is_covered(self):
+        self.assertEqual({r["outcome"] for r in self.assoc}, set(OUTCOME_LABELS))
+
+    def test_every_signal_level_is_demonstrable(self):
+        from collections import Counter
+
+        counts = Counter(self.level.values())
+        for level in ("inverse", "strong", "clear", "moderate", "weak"):
+            self.assertGreaterEqual(counts[level], 5, f"trop peu de '{level}'")
+        # Le paysage reste domine par l'absence de signal, comme un vrai
+        # corpus de co-occurrences.
+        self.assertGreater(counts["weak"], len(self.assoc) / 2)
+
+    def test_showcase_allele_keeps_its_contract(self):
+        showcase = gen_synthetic.SHOWCASE_HLA
+        for outcome in ("DSA", "ABMR", "graft_loss"):
+            self.assertEqual(self.level[(showcase, outcome)], "strong", outcome)
+        for outcome in ("NODAT", "skin_cancer", "BK_nephropathy"):
+            self.assertEqual(self.level[(showcase, outcome)], "weak", outcome)
+
+    def test_years_span_the_period_and_grow(self):
+        from collections import Counter
+
+        years = Counter(int(r["year"]) for r in self.articles)
+        self.assertEqual(min(years), gen_synthetic.YEAR_MIN)
+        self.assertEqual(max(years), gen_synthetic.YEAR_MAX)
+        early = sum(years[y] for y in range(1990, 2000))
+        late = sum(years[y] for y in range(2015, 2025))
+        self.assertGreater(late, 3 * early)
+
+    def test_some_authors_are_prolific(self):
+        from collections import Counter
+
+        per_author = Counter(r["author"] for r in self.authors)
+        prolific = [n for n in per_author.values() if n >= 15]
+        self.assertGreaterEqual(len(prolific), 20)
+        self.assertLessEqual(max(per_author.values()), 80)
+        # Une longue traine d'auteurs occasionnels existe aussi.
+        self.assertGreater(sum(1 for n in per_author.values() if n == 1), 100)
+
+
 if __name__ == "__main__":
     unittest.main()

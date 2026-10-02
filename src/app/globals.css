@@ -2,10 +2,237 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light;
+/*
+ * ─────────────────────────────────────────────────────────────────────────
+ *  JETONS DU DESIGN SYSTEM — voir docs/DESIGN_SYSTEM.md
+ * ─────────────────────────────────────────────────────────────────────────
+ * Chaque jeton est un triplet RGB (« R G B ») consomme par Tailwind sous la
+ * forme `rgb(var(--x) / <alpha>)` : les modificateurs d'opacite (`bg-fg/10`)
+ * fonctionnent donc sur tous les roles.
+ *
+ * Les memes valeurs existent en hexadecimal dans `src/lib/theme.ts` pour les
+ * moteurs de rendu qui ne lisent pas le CSS (canvas, export PNG). Toute
+ * modification ici doit y etre reportee — le test `theme.test.ts` y veille.
+ */
+
+@layer base {
+  :root {
+    color-scheme: light;
+
+    /* Surfaces — neutres chauds, papier plutot que gris clinique. */
+    --canvas: 247 246 242;          /* #F7F6F2 */
+    --surface: 255 255 255;         /* #FFFFFF */
+    --surface-muted: 241 239 234;   /* #F1EFEA */
+    --surface-sunken: 233 230 223;  /* #E9E6DF */
+    --surface-raised: 255 255 255;  /* #FFFFFF */
+
+    /* Texte — encre bleutee. */
+    --fg: 22 26 46;                 /* #161A2E */
+    --fg-muted: 69 75 96;           /* #454B60 */
+    --fg-subtle: 100 105 124;       /* #64697C */
+    --fg-faint: 154 158 173;        /* #9A9EAD */
+
+    --line: 227 224 216;            /* #E3E0D8 */
+    --line-strong: 203 198 186;     /* #CBC6BA */
+
+    /* Action principale : encre indigo. Accent : sarcelle. */
+    --primary: 47 54 129;           /* #2F3681 */
+    --primary-hover: 39 45 102;     /* #272D66 */
+    --primary-fg: 255 255 255;
+    --primary-soft: 236 238 250;    /* #ECEEFA */
+    --primary-soft-fg: 47 54 129;
+
+    --accent: 15 118 110;           /* #0F766E */
+    --accent-fg: 255 255 255;
+    --accent-soft: 225 243 239;     /* #E1F3EF */
+    --accent-soft-fg: 11 95 88;     /* #0B5F58 */
+
+    /* Statuts. */
+    --warn: 232 163 23;             /* #E8A317 — fond du bandeau synthetique */
+    --warn-fg: 52 33 0;             /* #342100 — texte sur --warn */
+    --warn-soft: 253 244 227;       /* #FDF4E3 */
+    --warn-soft-fg: 122 74 0;       /* #7A4A00 */
+    --warn-line: 240 207 138;       /* #F0CF8A */
+
+    --danger: 180 35 24;            /* #B42318 */
+    --danger-soft: 253 236 234;
+    --danger-soft-fg: 138 28 18;
+    --danger-line: 244 183 176;
+
+    --success: 31 122 77;           /* #1F7A4D */
+    --success-soft: 230 244 236;
+    --success-soft-fg: 20 92 57;
+    --success-line: 168 216 188;
+
+    /* Signal — sequentiel bleu (fort → faible) + orange divergent pour
+       l'inverse. Bleu/orange est la paire la plus robuste aux trois formes
+       de daltonisme ; le niveau reste toujours double d'un libelle. */
+    --signal-strong: 29 63 143;     /* #1D3F8F */
+    --signal-clear: 58 114 207;     /* #3A72CF */
+    --signal-moderate: 138 170 216; /* #8AAAD8 */
+    --signal-weak: 183 189 201;     /* #B7BDC9 */
+    --signal-inverse: 192 86 26;    /* #C0561A */
+
+    /* Categories cliniques — 7 teintes espacees, ni bleu ni orange pour ne
+       pas concurrencer l'echelle de signal. */
+    --cat-rejet: 209 73 91;         /* #D1495B */
+    --cat-immunisation: 123 92 196; /* #7B5CC4 */
+    --cat-greffon: 28 147 168;      /* #1C93A8 */
+    --cat-infection: 61 154 80;     /* #3D9A50 */
+    --cat-neoplasie: 192 80 143;    /* #C0508F */
+    --cat-metabolique: 194 147 24;  /* #C29318 */
+    --cat-recidive: 140 106 78;     /* #8C6A4E */
+    --cat-other: 122 129 148;       /* #7A8194 */
+
+    /* Classes HLA — meme famille indigo, separees par la luminance. */
+    --hla-class-1: 58 67 159;       /* #3A439F */
+    --hla-class-2: 124 136 221;     /* #7C88DD */
+
+    /* Surlignage des spans extraits (phrases sources). */
+    --mark-hla: 215 227 251;        /* #D7E3FB */
+    --mark-hla-fg: 20 42 99;        /* #142A63 */
+    --mark-outcome: 251 227 181;    /* #FBE3B5 */
+    --mark-outcome-fg: 90 54 0;     /* #5A3600 */
+
+    --focus: 58 114 207;
+    --shadow: 20 22 40;
+
+    --header-h: 3.75rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+
+      --canvas: 13 16 23;           /* #0D1017 */
+      --surface: 21 25 34;          /* #151922 */
+      --surface-muted: 27 32 43;    /* #1B202B */
+      --surface-sunken: 16 20 28;   /* #10141C */
+      --surface-raised: 30 36 48;   /* #1E2430 */
+
+      --fg: 231 233 240;            /* #E7E9F0 */
+      --fg-muted: 176 181 196;      /* #B0B5C4 */
+      --fg-subtle: 139 145 163;     /* #8B91A3 */
+      --fg-faint: 95 101 120;       /* #5F6578 */
+
+      --line: 39 45 58;             /* #272D3A */
+      --line-strong: 58 66 82;      /* #3A4252 */
+
+      --primary: 154 166 245;       /* #9AA6F5 */
+      --primary-hover: 183 192 248;
+      --primary-fg: 18 21 46;
+      --primary-soft: 32 38 74;
+      --primary-soft-fg: 201 208 250;
+
+      --accent: 60 200 180;         /* #3CC8B4 */
+      --accent-fg: 4 32 28;
+      --accent-soft: 15 46 43;
+      --accent-soft-fg: 143 227 214;
+
+      --warn: 232 163 23;
+      --warn-fg: 42 26 0;
+      --warn-soft: 43 34 16;
+      --warn-soft-fg: 245 207 133;
+      --warn-line: 107 82 28;
+
+      --danger: 240 122 110;
+      --danger-soft: 46 23 21;
+      --danger-soft-fg: 246 177 169;
+      --danger-line: 110 44 37;
+
+      --success: 92 201 141;
+      --success-soft: 17 40 28;
+      --success-soft-fg: 158 224 186;
+      --success-line: 36 88 59;
+
+      /* En sombre, l'ordre de luminance s'inverse : le plus fort est le
+         plus clair, pour rester le plus saillant. */
+      --signal-strong: 169 193 255; /* #A9C1FF */
+      --signal-clear: 110 151 238;  /* #6E97EE */
+      --signal-moderate: 74 108 168;/* #4A6CA8 */
+      --signal-weak: 72 80 99;      /* #485063 */
+      --signal-inverse: 242 154 92; /* #F29A5C */
+
+      --cat-rejet: 240 112 127;
+      --cat-immunisation: 168 139 235;
+      --cat-greffon: 76 192 212;
+      --cat-infection: 108 196 126;
+      --cat-neoplasie: 226 125 182;
+      --cat-metabolique: 226 183 63;
+      --cat-recidive: 192 154 122;
+      --cat-other: 154 161 179;
+
+      --hla-class-1: 142 153 240;
+      --hla-class-2: 195 202 248;
+
+      --mark-hla: 36 54 95;
+      --mark-hla-fg: 214 226 255;
+      --mark-outcome: 74 53 16;
+      --mark-outcome-fg: 251 224 168;
+
+      --focus: 110 151 238;
+      --shadow: 0 0 0;
+    }
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-padding-top: calc(var(--header-h) + 1rem);
+  }
+
+  body {
+    @apply bg-canvas font-sans text-fg antialiased;
+    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgb(var(--primary) / 0.18);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--focus));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  summary {
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
 }
 
-body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+@layer components {
+  /* Lien de texte courant : souligne fin, accentue au survol. */
+  .link {
+    @apply font-medium text-primary underline decoration-primary/30
+           decoration-1 underline-offset-[3px] transition-colors
+           hover:decoration-primary;
+  }
+
+  /* Nom d'allele : toujours en mono, chiffres tabulaires, sans ligatures. */
+  .allele {
+    @apply font-mono tracking-tight;
+    font-variant-ligatures: none;
+    font-feature-settings: "zero" 0, "calt" 0;
+  }
+
+  /* Raccourci clavier. */
+  .kbd {
+    @apply inline-flex h-5 min-w-[1.25rem] items-center justify-center
+           rounded border border-line-strong bg-surface-muted px-1
+           font-mono text-2xs font-medium text-fg-subtle;
+  }
+
+  /* Titre de sous-section en petites capitales espacees. */
+  .eyebrow {
+    @apply text-2xs font-semibold uppercase tracking-[0.12em] text-fg-subtle;
+  }
+
+  /* Chiffres alignes dans les tableaux et tuiles. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
 }

@@ -5,6 +5,10 @@ vrai pipeline (cf. scripts/schema.sql) pour que toute l'interface puisse etre
 developpee et testee sans acces aux donnees reelles, mais elles ne doivent
 JAMAIS etre presentees comme des resultats : un bandeau les signale partout.
 
+Les noms d'auteurs sont des patronymes courants combines a des initiales
+tirees au hasard : ils ne designent personne, et aucun article fictif n'est
+attribue a un chercheur reel identifiable.
+
 Proprietes garanties par construction (les tests en dependent) :
 
 * Determinisme : a seed fixee, les CSV sont identiques octet pour octet.
@@ -15,6 +19,29 @@ Proprietes garanties par construction (les tests en dependent) :
 * Les `associations` sont AGREGEES a partir des `pair_mentions` reellement
   emis, jamais tirees independamment : la validation V3 du builder verifie
   `associations.n_cooccurrence == COUNT(pair_mentions)` pour chaque paire.
+
+MODELE GENERATIF — un article = un ensemble d'entites, pas une liste de paires
+------------------------------------------------------------------------------
+Chaque article retient un petit ensemble d'alleles H et de complications O,
+puis emet une mention pour CHAQUE paire de H x O (produit cartesien). C'est ce
+qui donne un sens a la table de contingence : deux entites presentes dans le
+meme article y sont toujours comptees comme co-occurrentes. (L'ancien modele
+tirait des paires isolees ; deux entites d'un meme article mais de paires
+differentes n'etaient pas comptees ensemble, ce qui deprimait mecaniquement
+tous les NPMI.)
+
+    * une paire « principale » est tiree selon pop(h) x pop(o) x enrichissement ;
+    * 0 a 2 alleles et 0 a 2 complications « secondaires » sont tires selon
+      leur seule popularite (independants de la paire principale) ;
+    * un allele 4-digit entraine souvent son parent 2-digit (et inversement) :
+      c'est ainsi que la litterature les cite.
+
+Sous ce modele, une paire SANS enrichissement est proche de l'independance
+(npmi ~ 0, niveau `weak`) ; une paire enrichie devient `clear` ou `strong` ;
+les popularites varient avec les annees (le typage haute resolution, les
+eplets, les DSA et l'ABMR montent ; le rejet aigu decline), ce qui produit
+aussi quelques associations de « mode de publication » — exactement ce que le
+cadrage epistemique du site met en garde de ne pas lire comme de la clinique.
 
 CONTRAT STATISTIQUE — table de contingence unique et reconstructible
 --------------------------------------------------------------------
@@ -32,26 +59,41 @@ Consequences, toutes verifiees par les tests :
 * Aucune metrique ne peut en contredire une autre. En particulier `npmi > 0`
   equivaut a `odds_ratio > 1` : une ligne ne peut pas se declarer a la fois
   fortement co-citee et fortement protectrice.
-* Les statistiques sont RECONSTRUCTIBLES : un consommateur qui refait le
-  calcul depuis `n_cooccurrence`, `n_hla_total`, `n_outcome_total` et
-  `n_universe` retrouve exactement les valeurs du fichier. Aucune table
-  rescalee, aucun ajustement local invisible.
+* `npmi`, `odds_ratio` et `pval_fisher` sont RECONSTRUCTIBLES : un
+  consommateur qui refait le calcul depuis `n_cooccurrence`, `n_hla_total`,
+  `n_outcome_total` et `n_universe` retrouve exactement les valeurs du
+  fichier. (`pval_two_sided` aussi, SAUF sous `INVERSE_MIN_N` co-occurrences
+  ou elle est censuree a 1.0 — cf. ci-dessous.)
 * Le signal inverse est DELIBERE mais produit en amont, par les comptages
-  (cf. `_build_pair_plan`) : un HLA tres present dans le corpus et
-  volontairement sous-cite face a un outcome frequent. Il n'est jamais
-  fabrique en gonflant la table apres coup.
+  (cf. `_build_model`) : un HLA tres present dans le corpus, et une
+  complication tres presente, que les articles evitent de citer ensemble.
+  Il n'est jamais fabrique en gonflant la table apres coup.
 * Sous `INVERSE_MIN_N` co-occurrences, aucune conclusion de depletion n'est
   publiee (`pval_two_sided = 1.0`) : une paire vue une ou deux fois ne peut
   pas decrocher le badge "signal inverse".
+
+REGIMES DE TAILLE (seuils `SMALL_CORPUS` et `RARE_PAIRS_MIN_ARTICLES`)
+---------------------------------------------------------------------
+* Sous 300 articles (suites de tests), le test de Fisher manque de
+  puissance : pour qu'un signal inverse reste demontrable, deux paires
+  protectrices sont portees par des « porteurs » tres frequents
+  (cf. `CARRIER_RATES`).
+* A partir de 300, les douze paires protectrices de `INVERSE_PAIRS` sont
+  planifiees, avec un portage modeste ; elles ne deviennent significatives
+  qu'a partir de ~1 000 articles.
+* A partir de 1 500, les alleles rares (`MODERATE_PAIRS`,
+  `RARE_CLEAR_PAIRS`) recoivent leurs articles reserves : ce sont eux qui
+  peuplent les niveaux `moderate` et une partie des `clear`.
 
 Ces nombres restent FICTIFS et ne sont pas comparables aux sorties du vrai
 pipeline : ils sont seulement internement coherents.
 
 Usage :
-    python scripts/gen_synthetic.py --out data/synthetic --n-articles 400 --seed 42
+    python scripts/gen_synthetic.py --out data/synthetic --n-articles 3000 --seed 42
 """
 
 import argparse
+import bisect
 import csv
 import math
 import os
@@ -71,39 +113,115 @@ from labels import OUTCOME_LABELS
 YEAR_MIN = 1990
 YEAR_MAX = 2026
 
+DEFAULT_N_ARTICLES = 3000
+
+# Sous ce seuil, regime « petit corpus » (cf. docstring du module).
+SMALL_CORPUS = 300
+
+# Croissance annuelle de la litterature (~7 %/an) ; l'annee en cours n'est
+# que partiellement indexee.
+YEAR_GROWTH = 0.07
+CURRENT_YEAR_FRACTION = 0.6
+
+# (titre, abreviation, poids, premiere annee de parution dans le corpus)
 JOURNALS = [
-    ("American Journal of Transplantation", "Am J Transplant"),
-    ("Transplantation", "Transplantation"),
-    ("Nephrology Dialysis Transplantation", "Nephrol Dial Transplant"),
-    ("HLA", "HLA"),
-    ("Human Immunology", "Hum Immunol"),
+    ("American Journal of Transplantation", "Am J Transplant", 10, 2001),
+    ("Transplantation", "Transplantation", 10, 1990),
+    ("Nephrology Dialysis Transplantation", "Nephrol Dial Transplant", 6, 1990),
+    ("HLA", "HLA", 6, 2016),
+    ("Tissue Antigens", "Tissue Antigens", 6, 1990),
+    ("Human Immunology", "Hum Immunol", 7, 1990),
+    ("Kidney International", "Kidney Int", 5, 1990),
+    ("Journal of the American Society of Nephrology", "J Am Soc Nephrol", 5, 1990),
+    ("Clinical Transplantation", "Clin Transplant", 5, 1990),
+    ("Transplant International", "Transpl Int", 5, 1990),
+    ("Transplant Immunology", "Transpl Immunol", 4, 1993),
+    ("Transplantation Proceedings", "Transplant Proc", 6, 1990),
+    ("Frontiers in Immunology", "Front Immunol", 4, 2010),
+    ("Clinical Journal of the American Society of Nephrology", "Clin J Am Soc Nephrol", 3, 2006),
+    ("Kidney International Reports", "Kidney Int Rep", 2, 2016),
+    ("Pediatric Transplantation", "Pediatr Transplant", 2, 1997),
+    ("Transplantation Direct", "Transplant Direct", 2, 2015),
+    ("International Journal of Immunogenetics", "Int J Immunogenet", 3, 2005),
+    ("BMC Nephrology", "BMC Nephrol", 2, 2000),
+    ("PLoS One", "PLoS One", 3, 2006),
+    ("Scientific Reports", "Sci Rep", 2, 2011),
+    ("Journal of Clinical Medicine", "J Clin Med", 2, 2012),
+    ("American Journal of Kidney Diseases", "Am J Kidney Dis", 3, 1990),
+    ("Transplant Infectious Disease", "Transpl Infect Dis", 2, 1999),
+    ("Immunogenetics", "Immunogenetics", 2, 1990),
 ]
 
-COUNTRIES = [
-    "France",
-    "United States",
-    "United Kingdom",
-    "Germany",
-    "Netherlands",
-    "Canada",
-    "Spain",
-    "Italy",
-    "Japan",
-    "Australia",
-]
-
-SURNAMES = [
-    "Wiebe", "Nickerson", "Loupy", "Lefaucheur", "Jordan", "Tambur",
-    "Duquesnoy", "Claas", "Heidt", "Gebel", "Bray", "Reed", "Zachary",
-    "Montgomery", "Stegall", "Gaston", "Kaplan", "Meier-Kriesche",
-    "Halloran", "Sellares", "Einecke", "Mengel", "Randhawa", "Colvin",
-    "Sis", "Racusen", "Solez", "Haas", "Bagnasco", "Rabant", "Anglicheau",
-    "Legendre", "Thaunat", "Morelon", "Dubois", "Caillard", "Moulin",
-    "Bertrand", "Garrigue", "Taupin", "Suberbielle", "Charron", "Mooney",
+# (pays, poids, premiere annee d'activite des equipes, patronymes courants)
+# Patronymes volontairement communs : ils ne designent personne.
+COUNTRY_PROFILES = [
+    ("United States", 18, 1985, [
+        "Smith", "Johnson", "Brown", "Miller", "Davis", "Wilson", "Moore",
+        "Taylor", "Anderson", "Thomas", "Jackson", "White", "Harris", "Clark",
+        "Lewis", "Walker", "Young", "Allen", "Wright", "Scott", "Baker"]),
+    ("France", 10, 1985, [
+        "Martin", "Bernard", "Petit", "Durand", "Leroy", "Moreau", "Simon",
+        "Laurent", "Lefebvre", "Michel", "Garcia", "David", "Bertrand",
+        "Roux", "Vincent", "Fournier", "Girard", "Bonnet", "Mercier", "Blanc"]),
+    ("China", 9, 2002, [
+        "Wang", "Li", "Zhang", "Liu", "Chen", "Yang", "Huang", "Zhao", "Wu",
+        "Zhou", "Xu", "Sun", "Ma", "Zhu", "Hu", "Guo", "He", "Lin"]),
+    ("United Kingdom", 7, 1985, [
+        "Jones", "Williams", "Evans", "Roberts", "Hughes", "Edwards", "Green",
+        "Hall", "Wood", "Turner", "Hill", "Cooper", "Ward", "Morris"]),
+    ("Germany", 7, 1985, [
+        "Mueller", "Schmidt", "Schneider", "Fischer", "Weber", "Meyer",
+        "Wagner", "Becker", "Schulz", "Hoffmann", "Koch", "Richter", "Klein",
+        "Wolf"]),
+    ("Italy", 6, 1988, [
+        "Rossi", "Russo", "Ferrari", "Esposito", "Bianchi", "Romano",
+        "Colombo", "Ricci", "Marino", "Greco", "Bruno", "Gallo"]),
+    ("Japan", 6, 1988, [
+        "Sato", "Suzuki", "Takahashi", "Tanaka", "Watanabe", "Ito",
+        "Yamamoto", "Nakamura", "Kobayashi", "Kato", "Yoshida", "Yamada"]),
+    ("Netherlands", 5, 1985, [
+        "de Jong", "Jansen", "de Vries", "van den Berg", "van Dijk", "Bakker",
+        "Visser", "Smit", "Meijer", "de Boer", "Mulder", "Bos"]),
+    ("Spain", 5, 1990, [
+        "Fernandez", "Gonzalez", "Rodriguez", "Lopez", "Martinez", "Sanchez",
+        "Perez", "Gomez", "Ruiz", "Diaz", "Moreno", "Alvarez"]),
+    ("Canada", 5, 1988, [
+        "Tremblay", "Gagnon", "Roy", "Cote", "Bouchard", "Gauthier",
+        "Morin", "Lavoie", "Fortin", "Gagne", "MacDonald", "Campbell"]),
+    ("Australia", 4, 1990, [
+        "Kelly", "Murphy", "Ryan", "O'Brien", "Walsh", "Mitchell", "King",
+        "Robinson", "Thompson", "Lee"]),
+    ("South Korea", 4, 2004, [
+        "Kim", "Park", "Choi", "Jung", "Kang", "Cho", "Yoon", "Jang", "Lim",
+        "Han"]),
+    ("Brazil", 4, 2000, [
+        "Silva", "Santos", "Oliveira", "Souza", "Pereira", "Costa",
+        "Rodrigues", "Almeida", "Nascimento", "Lima"]),
+    ("Belgium", 3, 1990, [
+        "Peeters", "Janssens", "Maes", "Jacobs", "Mertens", "Willems",
+        "Claes", "Goossens"]),
+    ("Switzerland", 3, 1990, [
+        "Mueller", "Meier", "Schmid", "Keller", "Weber", "Huber", "Steiner",
+        "Gerber"]),
+    ("India", 3, 2006, [
+        "Sharma", "Kumar", "Singh", "Gupta", "Patel", "Reddy", "Rao",
+        "Iyer", "Nair", "Joshi"]),
+    ("Iran", 3, 2006, [
+        "Hosseini", "Mohammadi", "Ahmadi", "Rezaei", "Karimi", "Moradi",
+        "Rahimi", "Jafari"]),
+    ("Turkey", 3, 2002, [
+        "Yilmaz", "Kaya", "Demir", "Sahin", "Celik", "Yildiz", "Aydin",
+        "Ozturk"]),
+    ("Sweden", 2, 1988, [
+        "Andersson", "Johansson", "Karlsson", "Nilsson", "Eriksson",
+        "Larsson", "Olsson", "Persson"]),
+    ("Poland", 2, 1998, [
+        "Nowak", "Kowalski", "Wisniewski", "Wojcik", "Kowalczyk",
+        "Kaminski", "Lewandowski", "Zielinski"]),
 ]
 
 GIVEN_INITIALS = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M",
-                  "N", "P", "R", "S", "T", "V"]
+                  "N", "P", "R", "S", "T", "V", "Y"]
 
 TITLE_OPENERS = [
     "Impact of {hla} on {outcome} after kidney transplantation",
@@ -114,6 +232,14 @@ TITLE_OPENERS = [
     "Revisiting {hla} as a predictor of {outcome} in renal allograft recipients",
     "Eplet-level {hla} matching and {outcome} after renal transplantation",
     "A single-center analysis of {hla} and {outcome} in kidney transplant recipients",
+    "{hla} typing and {outcome}: a registry-based analysis",
+    "Donor {hla} and recipient {outcome} after deceased-donor kidney transplantation",
+    "Is {hla} a marker of {outcome} in kidney transplantation? A multicenter study",
+    "{outcome} and {hla} in pediatric kidney transplant recipients",
+    "High-resolution {hla} typing refines the assessment of {outcome}",
+    "{hla} in living-donor kidney transplantation: incidence of {outcome}",
+    "Ten-year follow-up of {outcome} according to {hla} status",
+    "{hla} and {outcome}: a systematic review and meta-analysis",
 ]
 
 ABSTRACT_BACKGROUND = [
@@ -121,6 +247,10 @@ ABSTRACT_BACKGROUND = [
     "Donor-specific alloimmunity is a leading cause of late kidney allograft failure.",
     "Molecular-level HLA matching has been proposed to refine immunological risk stratification.",
     "Risk stratification at transplantation still relies largely on antigen-level HLA matching.",
+    "Infectious and malignant complications remain frequent after kidney transplantation.",
+    "The relationship between recipient HLA genotype and post-transplant complications is poorly characterized.",
+    "Solid-phase antibody assays have transformed the monitoring of transplant recipients.",
+    "Recurrence of the native kidney disease is an under-recognized cause of graft loss.",
 ]
 
 ABSTRACT_METHODS = [
@@ -128,6 +258,10 @@ ABSTRACT_METHODS = [
     "Recipients transplanted over a ten-year period were included and followed prospectively.",
     "High-resolution HLA typing was imputed from antigen-level data for donor-recipient pairs.",
     "Multivariable Cox regression was used to adjust for recipient age, sex and induction therapy.",
+    "Data were extracted from a national transplant registry.",
+    "Single-antigen bead assays were performed at transplantation and yearly thereafter.",
+    "Eplet mismatches were computed with HLAMatchmaker.",
+    "Protocol and for-cause biopsies were graded according to the Banff classification.",
 ]
 
 ABSTRACT_RESULTS = [
@@ -135,6 +269,10 @@ ABSTRACT_RESULTS = [
     "Median follow-up was 7.4 years after transplantation.",
     "Protocol biopsies were available for a subset of the cohort.",
     "Sensitivity analyses excluding retransplant recipients gave consistent estimates.",
+    "A total of {n} recipients were included in the analysis.",
+    "Event rates differed markedly between transplant eras.",
+    "Results were consistent across deceased and living donor subgroups.",
+    "Missing typing data were handled by multiple imputation.",
 ]
 
 ABSTRACT_CONCLUSION = [
@@ -142,6 +280,8 @@ ABSTRACT_CONCLUSION = [
     "Prospective validation in an independent cohort is required before clinical implementation.",
     "Our results should be interpreted with caution given the observational design.",
     "Antigen-level matching alone may be insufficient to capture immunological risk.",
+    "Larger multicenter studies are needed to confirm these observations.",
+    "Residual confounding cannot be excluded.",
 ]
 
 # Formes de surface plausibles pour chaque outcome. La forme retenue est
@@ -171,14 +311,31 @@ OUTCOME_SPANS = {
     "IgA_nephropathy": ["IgA nephropathy", "recurrent IgA nephropathy"],
 }
 
-POSITIVE_TEMPLATE = (
-    "Recipients carrying {hla} showed a higher incidence of {outcome} in this cohort."
-)
-NEGATED_TEMPLATE = (
-    "We found no significant association between {hla} and {outcome} in this cohort."
-)
-NEGATION_TRIGGER = "no significant"
-NEGATED_RATE = 0.15
+POSITIVE_TEMPLATES = [
+    "Recipients carrying {hla} showed a higher incidence of {outcome} in this cohort.",
+    "{hla} was more frequent among patients who developed {outcome}.",
+    "The rate of {outcome} was increased in {hla}-positive recipients.",
+    "In multivariable analysis, {hla} remained associated with {outcome}.",
+    "We observed an excess of {outcome} among carriers of {hla}.",
+    "Episodes of {outcome} occurred more often when the donor expressed {hla}.",
+]
+# (gabarit, declencheur) : le declencheur est une sous-chaine litterale du
+# gabarit, donc de la phrase produite.
+NEGATED_TEMPLATES = [
+    ("We found no significant association between {hla} and {outcome} in this cohort.",
+     "no significant"),
+    ("{hla} was not associated with {outcome} after adjustment.",
+     "not associated"),
+    ("There was no difference in {outcome} between {hla}-positive and negative recipients.",
+     "no difference"),
+    ("The incidence of {outcome} did not differ according to {hla} status.",
+     "did not differ"),
+]
+NEGATED_RATE = 0.12
+# Une minorite de paires est « contestee » : majoritairement rapportee en
+# negatif. Le graphe les dessine en pointille.
+CONTESTED_RATE = 0.05
+CONTESTED_NEGATED_RATE = 0.6
 
 # Plancher de co-occurrence en deca duquel une paire n'est pas eligible a une
 # conclusion de depletion. Certifier une association protectrice a p<0.005 sur
@@ -200,15 +357,80 @@ LOCI = [
     ("A", "I"), ("B", "I"), ("C", "I"),
     ("DRB1", "II"), ("DQB1", "II"), ("DPB1", "II"),
 ]
-TWO_DIGIT = [
-    ("HLA-A*01", "A"), ("HLA-A*02", "A"),
-    ("HLA-B*07", "B"), ("HLA-B*08", "B"),
-    ("HLA-DRB1*03", "DRB1"), ("HLA-DRB1*04", "DRB1"), ("HLA-DRB1*15", "DRB1"),
-    ("HLA-DQB1*02", "DQB1"), ("HLA-DQB1*03", "DQB1"), ("HLA-DQB1*06", "DQB1"),
-    ("HLA-DPB1*01", "DPB1"), ("HLA-DPB1*04", "DPB1"),
+
+# Vocabulaire 2-digit inspire de la carte v1 reelle
+# (data/legacy/carte_v1_renal.json), complete des groupes alleliques les plus
+# frequents en transplantation. {groupe: (popularite relative, [enfants 4-digit])}
+# La popularite fixe la frequence de citation ; le premier enfant 4-digit
+# herite de la plus grande part.
+ALLELE_GROUPS = {
+    "A": {
+        "01": (0.60, ["01"]),
+        "02": (1.00, ["01", "02", "03", "05", "06", "07", "11", "17"]),
+        "03": (0.50, ["01", "02"]),
+        "11": (0.40, ["01", "02", "03"]),
+        "23": (0.20, ["01"]),
+        "24": (0.50, ["02", "07", "03"]),
+        "25": (0.15, ["01", "14"]),
+        "26": (0.20, ["01"]),
+        "29": (0.20, ["02"]),
+        "30": (0.20, ["01", "02"]),
+        "31": (0.20, ["01"]),
+        "33": (0.25, ["01", "03"]),
+        "68": (0.25, ["01", "02", "03"]),
+    },
+    "B": {
+        "07": (0.50, ["02", "05"]),
+        "08": (0.55, ["01"]),
+        "13": (0.20, ["02"]),
+        "15": (0.40, ["01", "02", "11", "17"]),
+        "18": (0.25, ["01"]),
+        "27": (0.40, ["05", "02", "04"]),
+        "35": (0.45, ["01", "03", "08", "05"]),
+        "39": (0.20, ["01"]),
+        "40": (0.25, ["01", "02"]),
+        "44": (0.50, ["02", "03", "05"]),
+        "46": (0.20, ["01"]),
+        "51": (0.40, ["01", "08"]),
+        "55": (0.15, ["01"]),
+        "57": (0.30, ["01"]),
+        "58": (0.30, ["01"]),
+    },
+    "C": {
+        "03": (0.30, ["03", "04"]),
+        "04": (0.30, ["01"]),
+        "06": (0.25, ["02"]),
+        "07": (0.35, ["01", "02", "04"]),
+        "14": (0.15, ["02"]),
+        "17": (0.15, ["01"]),
+    },
+    "DRB1": {
+        "01": (0.40, ["01", "02"]),
+        "03": (0.65, ["01", "02"]),
+        "04": (0.60, ["01", "04", "05"]),
+        "07": (0.45, ["01"]),
+        "11": (0.50, ["01", "04", "03"]),
+        "13": (0.45, ["01", "02", "03"]),
+        "15": (0.70, ["01", "02"]),
+    },
+    "DQB1": {
+        "02": (0.80, ["01", "02"]),
+        "03": (0.60, ["01", "02", "03"]),
+        "05": (0.40, ["01", "02", "03"]),
+        "06": (0.55, ["02", "03", "09"]),
+    },
+    "DPB1": {
+        "01": (0.25, ["01"]),
+        "04": (0.45, ["01", "02"]),
+    },
+}
+
+# Entites non alleliques citees par le pipeline.
+SPECIAL_ENTITIES = [
+    # (hla, locus, resolution, popularite)
+    ("HLA-mismatch", "mismatch", "mismatch_count", 1.30),
+    ("HLA-eplet", "eplet", "eplet", 0.80),
 ]
-# Deux allèles 4-digit par 2-digit.
-FOUR_DIGIT_SUFFIXES = ["01", "02"]
 
 CLASS_OF_LOCUS = dict(LOCI)
 CLASS_ROOT_OF_CLASS = {"I": "HLA-class-I", "II": "HLA-class-II"}
@@ -216,6 +438,10 @@ CLASS_ROOT_OF_CLASS = {"I": "HLA-class-I", "II": "HLA-class-II"}
 # L'allele vitrine du prototype : les taches ulterieures l'interrogent
 # nommement et attendent une couverture genereuse (dont un signal faible).
 SHOWCASE_HLA = "HLA-DQB1*02:01"
+
+
+def _two_digit_key(locus, group):
+    return f"HLA-{locus}*{group}"
 
 
 def build_hla_entities():
@@ -238,30 +464,261 @@ def build_hla_entities():
             "resolution": "class", "parent_hla": CLASS_ROOT_OF_CLASS[hla_class],
         })
 
-    for two, locus in TWO_DIGIT:
-        rows.append({
-            "hla": two, "locus": locus, "hla_class": CLASS_OF_LOCUS[locus],
-            "resolution": "2-digit", "parent_hla": locus,
-        })
-
-    for two, locus in TWO_DIGIT:
-        for suffix in FOUR_DIGIT_SUFFIXES:
+    for locus, _ in LOCI:
+        for group in ALLELE_GROUPS[locus]:
             rows.append({
-                "hla": f"{two}:{suffix}", "locus": locus,
+                "hla": _two_digit_key(locus, group), "locus": locus,
                 "hla_class": CLASS_OF_LOCUS[locus],
-                "resolution": "4-digit", "parent_hla": two,
+                "resolution": "2-digit", "parent_hla": locus,
             })
 
-    rows.append({
-        "hla": "HLA-mismatch", "locus": "mismatch", "hla_class": "unknown",
-        "resolution": "mismatch_count", "parent_hla": "",
-    })
-    rows.append({
-        "hla": "HLA-eplet", "locus": "eplet", "hla_class": "unknown",
-        "resolution": "eplet", "parent_hla": "",
-    })
+    for locus, _ in LOCI:
+        for group, (_, children) in ALLELE_GROUPS[locus].items():
+            two = _two_digit_key(locus, group)
+            for suffix in children:
+                rows.append({
+                    "hla": f"{two}:{suffix}", "locus": locus,
+                    "hla_class": CLASS_OF_LOCUS[locus],
+                    "resolution": "4-digit", "parent_hla": two,
+                })
+
+    for hla, locus, resolution, _ in SPECIAL_ENTITIES:
+        rows.append({
+            "hla": hla, "locus": locus, "hla_class": "unknown",
+            "resolution": resolution, "parent_hla": "",
+        })
 
     return rows
+
+
+def _hla_popularity():
+    """Popularite de citation de chaque entite mentionnable.
+
+    Un 4-digit est cite moins souvent que son groupe 2-digit (le typage haute
+    resolution est plus rare) ; le premier enfant (l'allele le plus frequent
+    du groupe) en prend la plus grosse part.
+    """
+    pop = {}
+    for locus, _ in LOCI:
+        for group, (p, children) in ALLELE_GROUPS[locus].items():
+            two = _two_digit_key(locus, group)
+            pop[two] = p
+            for rank, suffix in enumerate(children):
+                share = 0.55 if rank == 0 else 0.30 / rank
+                pop[f"{two}:{suffix}"] = round(p * share, 4)
+    for hla, _, _, p in SPECIAL_ENTITIES:
+        pop[hla] = p
+    # L'allele vitrine est l'un des plus documentes du corpus.
+    pop[SHOWCASE_HLA] = 0.60
+    # Alleles rares des paires « moderees » : jamais tires au fond, cites
+    # seulement par leurs articles reserves (cf. MODERATE_PAIRS).
+    for hla, _ in MODERATE_PAIRS + RARE_CLEAR_PAIRS:
+        pop[hla] = 0.0
+    return pop
+
+
+# Popularite des complications : DSA, ABMR et rejet dominent la litterature.
+OUTCOME_POPULARITY = {
+    "DSA": 1.00, "ABMR": 0.90, "acute_rejection": 0.85, "graft_loss": 0.80,
+    "graft_survival": 0.70, "sensitization": 0.60, "HLA_mismatch_outcome": 0.60,
+    "chronic_rejection": 0.50, "TCMR": 0.45, "CMV": 0.45, "DGF": 0.40,
+    "eGFR": 0.40, "BK_nephropathy": 0.35, "complement_activation": 0.35,
+    "mixed_rejection": 0.15, "PTLD": 0.13, "skin_cancer": 0.18, "NODAT": 0.13,
+    "recurrent_GN": 0.18, "IgA_nephropathy": 0.14, "FSGS": 0.10,
+}
+
+
+def _hla_era_factor(hla, resolution, year):
+    """Modulation temporelle de la popularite d'un allele."""
+    if hla == "HLA-eplet":
+        # HLAMatchmaker et les eplets n'entrent dans la litterature qu'au
+        # milieu des annees 2000, puis s'imposent.
+        if year < 2005:
+            return 0.0
+        return min(2.0, 0.4 + 0.12 * (year - 2005))
+    if hla == "HLA-mismatch":
+        return 1.3 if year < 2000 else 1.0
+    if resolution == "4-digit":
+        # Le typage haute resolution se generalise apres 2000.
+        if year < 2000:
+            return 0.35
+        return min(1.4, 0.6 + 0.05 * (year - 2000))
+    return 1.0
+
+
+def _outcome_era_factor(outcome, year):
+    """Modulation temporelle de la popularite d'une complication."""
+    if outcome == "complement_activation":
+        return 0.0 if year < 2004 else 1.0
+    if outcome == "BK_nephropathy":
+        return 0.0 if year < 1996 else 1.0
+    if outcome in ("DSA", "ABMR"):
+        if year < 2003:
+            return 0.5
+        return 1.3 if year >= 2010 else 1.0
+    if outcome == "acute_rejection":
+        if year < 2000:
+            return 1.5
+        return 0.8 if year >= 2010 else 1.0
+    if outcome == "TCMR":
+        return 0.4 if year < 2005 else 1.0
+    return 1.0
+
+
+# =====================================================================
+# PAYSAGE DE SIGNAL PLANIFIE
+# =====================================================================
+
+# Paires « fortes » : enrichissement net de la paire principale.
+# Inspirees des aretes les plus lourdes de la carte v1 reelle (rejet / ABMR x
+# DQ2, DQ5, DQ7 ; CMV x DR1, B51 ; BK x B13, B44, DR3 ; PTLD x DQ2 ...).
+STRONG_PAIRS = [
+    (SHOWCASE_HLA, "DSA"),
+    (SHOWCASE_HLA, "ABMR"),
+    (SHOWCASE_HLA, "graft_loss"),
+    ("HLA-DQB1*02", "DSA"),
+    ("HLA-DRB1*03", "ABMR"),
+    ("HLA-mismatch", "acute_rejection"),
+    ("HLA-eplet", "DSA"),
+    ("HLA-DRB1*15", "IgA_nephropathy"),
+    ("HLA-B*08", "sensitization"),
+    ("HLA-A*02", "CMV"),
+    ("HLA-DQB1*05", "ABMR"),
+    ("HLA-DQB1*03:01", "TCMR"),
+    ("HLA-DRB1*01", "CMV"),
+    ("HLA-B*51", "CMV"),
+    ("HLA-B*44", "BK_nephropathy"),
+    ("HLA-DRB1*11", "recurrent_GN"),
+    ("HLA-mismatch", "graft_survival"),
+    ("HLA-eplet", "ABMR"),
+]
+
+# Paires « nettes » : enrichissement modere, attendues en `clear`/`strong`
+# selon leur effectif.
+CLEAR_PAIRS = [
+    ("HLA-B*13", "BK_nephropathy"),
+    ("HLA-DRB1*03", "BK_nephropathy"),
+    ("HLA-DQB1*02", "PTLD"),
+    ("HLA-B*55:01", "PTLD"),
+    ("HLA-B*18", "skin_cancer"),
+    ("HLA-A*11", "eGFR"),
+    ("HLA-A*31", "CMV"),
+    ("HLA-B*39", "NODAT"),
+    ("HLA-A*33", "NODAT"),
+    ("HLA-B*46", "recurrent_GN"),
+    ("HLA-A*68", "recurrent_GN"),
+    ("HLA-C*03", "chronic_rejection"),
+    ("HLA-C*07", "TCMR"),
+    ("HLA-DRB1*15", "ABMR"),
+    ("HLA-DRB1*07", "FSGS"),
+    ("HLA-DQB1*06:02", "complement_activation"),
+    ("HLA-DQB1*06", "chronic_rejection"),
+    ("HLA-DPB1*04:01", "sensitization"),
+    ("HLA-B*27:05", "IgA_nephropathy"),
+    ("HLA-A*24:02", "DGF"),
+    ("HLA-B*35", "CMV"),
+    ("HLA-DRB1*04:01", "NODAT"),
+    ("HLA-DRB1*13", "mixed_rejection"),
+    ("HLA-A*01:01", "skin_cancer"),
+    ("HLA-B*57:01", "eGFR"),
+    ("HLA-B*58:01", "eGFR"),
+    ("HLA-C*06:02", "skin_cancer"),
+    ("HLA-DQB1*03:02", "NODAT"),
+    ("HLA-B*07:02", "complement_activation"),
+    ("HLA-A*03", "HLA_mismatch_outcome"),
+]
+
+# En plus des paires nettes nommees ci-dessus, `RANDOM_CLEAR_PAIRS` paires
+# tirees au hasard (a seed fixee) recoivent une co-citation modeste : la
+# litterature reelle compte bien plus de signaux modestes que de vedettes.
+RANDOM_CLEAR_PAIRS = 160
+
+# Paires vitrine a signal faible : l'UI doit pouvoir montrer un "weak"
+# sur la fiche de l'allele vedette. Aucun enrichissement : independance.
+WEAK_PAIRS = [
+    (SHOWCASE_HLA, "NODAT"),
+    (SHOWCASE_HLA, "skin_cancer"),
+    (SHOWCASE_HLA, "BK_nephropathy"),
+]
+
+# Paires « moderees » : un allele RARE (absent du tirage de fond, cite par
+# deux articles seulement, tous deux sur la meme complication rare). Deux
+# co-occurrences suffisent a un FDR < 0.05 quand l'attendu est quasi nul :
+# c'est exactement le niveau `moderate` (significatif, effectif < 3).
+MODERATE_PAIRS = [
+    ("HLA-A*25:14", "FSGS"),
+    ("HLA-C*17:01", "PTLD"),
+    ("HLA-B*15:11", "NODAT"),
+    ("HLA-DRB1*01:02", "IgA_nephropathy"),
+    ("HLA-A*02:11", "mixed_rejection"),
+    ("HLA-B*35:08", "FSGS"),
+    ("HLA-DRB1*04:05", "NODAT"),
+    ("HLA-B*40:02", "mixed_rejection"),
+    ("HLA-DQB1*03:03", "FSGS"),
+    ("HLA-C*14:02", "PTLD"),
+    ("HLA-A*33:03", "PTLD"),
+    ("HLA-DPB1*04:02", "IgA_nephropathy"),
+]
+MODERATE_COUNT = 2
+
+# Meme mecanisme pour le niveau `clear` (significatif, 3 a 9 co-occurrences) :
+# des alleles rares cites par une poignee d'articles (3 a 6), tous sur la meme
+# complication. Un allele frequent n'y parviendrait pas : son attendu sous
+# independance est deja de plusieurs co-occurrences.
+RARE_CLEAR_PAIRS = [
+    ("HLA-A*02:17", "DSA"),
+    ("HLA-A*24:03", "BK_nephropathy"),
+    ("HLA-B*07:05", "chronic_rejection"),
+    ("HLA-B*15:17", "CMV"),
+    ("HLA-B*27:04", "TCMR"),
+    ("HLA-B*44:05", "DGF"),
+    ("HLA-B*51:08", "eGFR"),
+    ("HLA-C*07:04", "complement_activation"),
+    ("HLA-DRB1*03:02", "recurrent_GN"),
+    ("HLA-DRB1*11:03", "graft_loss"),
+    ("HLA-DRB1*13:03", "ABMR"),
+    ("HLA-DQB1*06:09", "sensitization"),
+    ("HLA-A*68:03", "skin_cancer"),
+    ("HLA-A*11:03", "HLA_mismatch_outcome"),
+    ("HLA-DQB1*05:03", "acute_rejection"),
+    ("HLA-B*35:05", "graft_survival"),
+]
+RARE_CLEAR_COUNT = (3, 6)
+RARE_PAIRS_MIN_ARTICLES = 1500
+
+# Part des paires de fond recevant un enrichissement non planifie.
+UNPLANNED_ENRICH_RATE = 0.10
+
+# Paires protectrices : demonstration du badge "signal inverse". Les deux
+# premieres servent aussi au regime « petit corpus ».
+INVERSE_PAIRS = [
+    ("HLA-DRB1*04", "acute_rejection"),
+    ("HLA-A*01", "graft_loss"),
+    ("HLA-A*02", "ABMR"),
+    ("HLA-DPB1*04", "graft_survival"),
+    ("HLA-DRB1*15", "graft_loss"),
+    ("HLA-B*07", "DSA"),
+    ("HLA-DRB1*11", "acute_rejection"),
+    ("HLA-B*44", "ABMR"),
+    ("HLA-DQB1*03", "DSA"),
+    ("HLA-DQB1*06", "acute_rejection"),
+    ("HLA-A*24", "ABMR"),
+    ("HLA-B*35", "graft_loss"),
+]
+SMALL_CORPUS_INVERSE = 2
+
+# Taux de « portage » des paires protectrices : probabilite qu'un article
+# cite l'allele (resp. la complication) d'une paire protectrice en plus de
+# son contenu propre. Necessaire en petit corpus pour donner de la puissance
+# au test bilateral ; modeste en grand corpus.
+CARRIER_RATES = {
+    "small": (0.30, 0.70),
+    "large": (0.05, 0.0),
+}
+
+# Probabilite d'ecarter une co-citation protectrice hors quota : 1.0 en petit
+# corpus (comptage exact), un peu moins en grand corpus (comptages varies).
+INVERSE_REJECTION = {"small": 1.0, "large": 0.97}
 
 
 # =====================================================================
@@ -374,34 +831,40 @@ def odds_ratio_with_ci(a, b, c, d):
 # GENERATION
 # =====================================================================
 
-def _draw_year(rng):
-    """Annee dans [YEAR_MIN, YEAR_MAX], densite croissante vers le recent.
+class _Cumulative:
+    """Tirage pondere avec remise en O(log n), deterministe pour un rng donne.
+
+    Les elements de poids nul ne peuvent jamais sortir : `bisect_right` saute
+    les intervalles de largeur nulle.
+    """
+
+    def __init__(self, items, weights):
+        self.items = list(items)
+        self.cum = []
+        acc = 0.0
+        for w in weights:
+            acc += max(0.0, w)
+            self.cum.append(acc)
+        self.total = acc
+
+    def pick(self, rng):
+        if self.total <= 0:
+            raise ValueError("aucun element de poids positif")
+        r = rng.random() * self.total
+        i = bisect.bisect_right(self.cum, r)
+        return self.items[min(i, len(self.items) - 1)]
+
+
+def _year_weights():
+    """Poids annuels : croissance exponentielle, annee courante partielle.
 
     Les sparklines doivent avoir une forme plausible : la litterature HLA en
-    transplantation a explose dans les annees 2010.
+    transplantation croit d'environ 7 % par an depuis 1990.
     """
-    span = YEAR_MAX - YEAR_MIN
-    # u**0.45 concentre la masse vers le haut de l'intervalle.
-    u = rng.random() ** 0.45
-    return YEAR_MIN + int(round(u * span))
-
-
-def _make_authors(rng):
-    """Liste d'auteurs suivant approximativement une loi de Lotka.
-
-    Quelques auteurs tres prolifiques, une longue traine d'auteurs uniques :
-    la fiche auteur doit etre demontrable sur les donnees synthetiques.
-    """
-    pool = []
-    for i, surname in enumerate(SURNAMES):
-        initial = GIVEN_INITIALS[i % len(GIVEN_INITIALS)]
-        name = f"{surname} {initial}"
-        # Poids ~ 1/rank^1.6 : loi de puissance facon Lotka.
-        weight = 1.0 / ((i + 1) ** 1.6)
-        pool.append((name, weight))
-    names = [n for n, _ in pool]
-    weights = [w for _, w in pool]
-    return names, weights
+    years = list(range(YEAR_MIN, YEAR_MAX + 1))
+    weights = [math.exp(YEAR_GROWTH * (y - YEAR_MIN)) for y in years]
+    weights[-1] *= CURRENT_YEAR_FRACTION
+    return years, weights
 
 
 def _weighted_sample(rng, population, weights, k):
@@ -418,8 +881,6 @@ def _weighted_sample(rng, population, weights, k):
         acc = 0.0
         # `r < acc` (strict) avec r tire dans [0, total) garantit que la
         # boucle trouve toujours un element : le cumul final vaut total > r.
-        # Un `<=` laissait passer un cas de repli qui biaisait silencieusement
-        # le tirage vers l'element de plus faible poids.
         for i, w in enumerate(wts):
             acc += w
             if r < acc:
@@ -429,137 +890,280 @@ def _weighted_sample(rng, population, weights, k):
     return picked
 
 
-def _build_pair_plan(rng, hla_rows, n_articles):
-    """Choisit les paires (hla, outcome) qui porteront du signal.
+def _build_model(rng, hla_rows, n_articles):
+    """Planifie le paysage de signal et precalcule les tables de tirage.
 
     Le signal inverse est produit PAR LES COMPTAGES, jamais par un correctif
-    applique apres coup a la table de contingence. Une paire protectrice est
-    un HLA par ailleurs tres present dans le corpus (il accumule des mentions
-    sur d'autres outcomes, donc n_hla_total est eleve) mais delibrement
-    sous-cite face a un outcome lui-meme frequent. La co-occurrence observee
-    tombe alors sous n_a*n_b/N, et la depletion se lit directement dans les
-    donnees : npmi, odds_ratio et Fisher s'accordent tous en signe parce
-    qu'ils decoulent tous de la meme table.
+    applique apres coup a la table de contingence : une paire protectrice
+    relie un allele et une complication tous deux frequents, mais que les
+    articles evitent de citer ensemble (hors d'un petit quota fixe). La
+    co-occurrence observee tombe alors sous n_a*n_b/N, et la depletion se lit
+    directement dans les donnees : npmi, odds_ratio et Fisher s'accordent
+    tous en signe parce qu'ils decoulent tous de la meme table.
     """
+    regime = "small" if n_articles < SMALL_CORPUS else "large"
+    resolution_of = {r["hla"]: r["resolution"] for r in hla_rows}
+    parent_of = {r["hla"]: r["parent_hla"] for r in hla_rows}
+    children_of = defaultdict(list)
+    for r in hla_rows:
+        if r["resolution"] == "4-digit":
+            children_of[r["parent_hla"]].append(r["hla"])
+
     mentionable = [
         r["hla"] for r in hla_rows
         if r["resolution"] in ("4-digit", "2-digit", "mismatch_count", "eplet")
     ]
     outcomes = list(OUTCOME_LABELS)
+    pop_h = _hla_popularity()
 
-    # Paires "fortes" : bien couvertes, signal net.
-    strong_pairs = [
-        (SHOWCASE_HLA, "DSA"),
-        (SHOWCASE_HLA, "ABMR"),
-        (SHOWCASE_HLA, "graft_loss"),
-        ("HLA-DQB1*02", "DSA"),
-        ("HLA-DRB1*03", "ABMR"),
-        ("HLA-mismatch", "acute_rejection"),
-        ("HLA-eplet", "DSA"),
-        ("HLA-DRB1*15", "IgA_nephropathy"),
-        ("HLA-B*08", "sensitization"),
-        ("HLA-A*02", "CMV"),
+    inverse = INVERSE_PAIRS[:SMALL_CORPUS_INVERSE] if regime == "small" else list(INVERSE_PAIRS)
+    planned = (STRONG_PAIRS + CLEAR_PAIRS + WEAK_PAIRS + MODERATE_PAIRS
+               + RARE_CLEAR_PAIRS + inverse)
+    for hla, outcome in planned:
+        # Garde-fou : une faute de frappe dans un plan ne doit pas produire
+        # silencieusement une paire jamais tiree.
+        if hla not in resolution_of or outcome not in OUTCOME_LABELS:
+            raise ValueError(f"paire planifiee inconnue : {(hla, outcome)}")
+
+    # Deux leviers distincts :
+    #  * `enrich` MULTIPLIE pop(h) x pop(o) dans le tirage de la paire
+    #    principale — heterogeneite de fond, enrichissements non planifies ;
+    #  * `boost` est une CO-CITATION CONDITIONNELLE : un article qui cite h
+    #    (par quelque voie que ce soit) cite aussi o avec la probabilite q.
+    #    C'est le levier des paires planifiees. Il ne gonfle pas n_hla_total
+    #    (contrairement a une part d'articles reservee a la paire, qui
+    #    deprimerait mecaniquement toutes les AUTRES paires de h et ferait
+    #    apparaitre de faux signaux inverses), et il donne a un allele peu
+    #    cite un effectif proportionne a sa presence dans le corpus.
+    enrich = {}
+    boost = {}
+    for pair in STRONG_PAIRS:
+        # Les paires de l'allele vitrine ont la co-citation la plus nette : la
+        # fiche d'accueil doit montrer des signaux forts quel que soit le seed.
+        low, high = (0.40, 0.50) if pair[0] == SHOWCASE_HLA else (0.25, 0.45)
+        boost[pair] = rng.uniform(low, high)
+    for pair in CLEAR_PAIRS:
+        boost[pair] = rng.uniform(0.10, 0.22)
+    for pair in WEAK_PAIRS:
+        enrich[pair] = 1.0
+    reserved = set(planned) | {h for h, _ in MODERATE_PAIRS + RARE_CLEAR_PAIRS}
+    # Candidats : paires de fond PEU attendues (entites peu citees), pour
+    # que quelques co-citations supplementaires s'y lisent comme un signal.
+    candidates = [
+        (h, o) for h in mentionable for o in outcomes
+        if (h, o) not in reserved and h not in reserved
+        and 0 < pop_h[h] * OUTCOME_POPULARITY[o] < 0.08
+        # Les complications les plus rares sont laissees aux paires
+        # « moderees », dont la significativite exige un attendu quasi nul.
+        and OUTCOME_POPULARITY[o] >= 0.18
+        and not any(h == ih for ih, _ in inverse)
     ]
-    # Paires vitrine a signal faible : l'UI doit pouvoir montrer un "weak"
-    # sur la fiche de l'allele vedette.
-    weak_pairs = [
-        (SHOWCASE_HLA, "NODAT"),
-        (SHOWCASE_HLA, "skin_cancer"),
-        (SHOWCASE_HLA, "BK_nephropathy"),
-    ]
-    # Paires protectrices : demonstration du badge "signal inverse".
-    # Chaque HLA ci-dessous est rendu tres present ailleurs (carrier_outcomes)
-    # puis sous-cite face a l'outcome cible, frequent par ailleurs.
-    inverse_pairs = [
-        ("HLA-DRB1*04", "acute_rejection"),
-        ("HLA-DPB1*04", "DGF"),
-        ("HLA-A*01", "graft_loss"),
-    ]
-    # Outcomes porteurs : gonflent n_hla_total sans toucher a la cible.
-    carrier_outcomes = [
-        "sensitization", "eGFR", "graft_survival", "chronic_rejection",
-        "complement_activation", "HLA_mismatch_outcome", "CMV",
-    ]
+    n_random = RANDOM_CLEAR_PAIRS if regime == "large" else 0
+    for pair in rng.sample(candidates, n_random):
+        boost[pair] = rng.uniform(0.12, 0.35)
+    for pair in inverse:
+        enrich[pair] = 0.0
+    for pair in MODERATE_PAIRS + RARE_CLEAR_PAIRS:
+        enrich[pair] = 0.0
+    boosts_of = defaultdict(list)
+    for (h, o), q in sorted(boost.items()):
+        boosts_of[h].append((o, q))
 
-    plan = {}
-    for pair in strong_pairs:
-        plan[pair] = {"kind": "strong", "weight": rng.uniform(8.0, 14.0)}
-    for pair in weak_pairs:
-        plan[pair] = {"kind": "weak", "weight": rng.uniform(1.0, 2.0)}
-
-    # Les cibles protectrices ne sont PAS laissees au tirage pondere : le
-    # tirage se fait sans remise et les paires se concurrencent, donc un poids
-    # eleve ne garantit pas un comptage. On leur reserve un quota fixe
-    # d'articles (cf. _inverse_quota), ce qui rend le nombre de mentions
-    # deterministe et independant de la taille du corpus. Poids nul ici :
-    # elles n'apparaissent que via le quota.
-    for pair in inverse_pairs:
-        plan[pair] = {"kind": "inverse", "weight": 0.0}
-
-    # Les outcomes cibles doivent etre frequents dans le corpus : c'est
-    # n_outcome_total qui fixe l'attendu, donc l'ampleur de la depletion.
-    # On les cite abondamment via d'AUTRES alleles que les porteurs inverses.
-    inverse_targets = {out for _, out in inverse_pairs}
-    boosters = [h for h in mentionable
-                if h not in {hla for hla, _ in inverse_pairs}]
-    booster_scale = 1.0
-    # Sur un petit corpus, le test de Fisher manque de puissance : il faut
-    # elargir l'ecart entre observe (fixe par le quota) et attendu, donc citer
-    # les outcomes cibles par davantage d'alleles tiers.
-    n_boosters = 14 if n_articles >= 300 else max(6, len(boosters) // 2)
-    for outcome in sorted(inverse_targets):
-        for hla in boosters[:n_boosters]:
-            if (hla, outcome) in plan:
-                continue
-            plan[(hla, outcome)] = {
-                "kind": "booster",
-                "weight": rng.uniform(6.0, 10.0) * booster_scale,
-            }
-
-    # Presence de fond elevee pour les porteurs de signal inverse : c'est ce
-    # qui rend n_hla_total grand, donc l'attendu n_a*n_b/N grand devant la
-    # co-occurrence observee.
-    for hla, target in inverse_pairs:
-        for outcome in carrier_outcomes:
-            if (hla, outcome) == (hla, target) or (hla, outcome) in plan:
-                continue
-            plan[(hla, outcome)] = {
-                "kind": "carrier",
-                "weight": rng.uniform(9.0, 15.0),
-            }
-
-    # Bruit de fond : beaucoup de paires faiblement couvertes.
+    negated_rate = {}
+    pair_keys = []
     for hla in mentionable:
         for outcome in outcomes:
-            if (hla, outcome) in plan:
-                continue
-            if rng.random() < 0.22:
-                plan[(hla, outcome)] = {
-                    "kind": "background",
-                    "weight": rng.uniform(0.15, 1.0),
-                }
+            pair = (hla, outcome)
+            pair_keys.append(pair)
+            if pair not in enrich:
+                # Heterogeneite de fond, et quelques enrichissements non
+                # planifies : la litterature reelle n'est pas un plan.
+                factor = math.exp(rng.gauss(0.0, 0.3))
+                if rng.random() < UNPLANNED_ENRICH_RATE:
+                    factor *= rng.uniform(2.5, 5.0)
+                enrich[pair] = factor
+            if pair in inverse:
+                negated_rate[pair] = 0.45
+            elif rng.random() < CONTESTED_RATE:
+                negated_rate[pair] = CONTESTED_NEGATED_RATE
+            else:
+                negated_rate[pair] = NEGATED_RATE
 
-    return plan
+    years, _ = _year_weights()
+    lead_by_year = {}
+    hla_by_year = {}
+    outcome_by_year = {}
+    for year in years:
+        w_h = {h: pop_h[h] * _hla_era_factor(h, resolution_of[h], year) for h in mentionable}
+        w_o = {o: OUTCOME_POPULARITY[o] * _outcome_era_factor(o, year) for o in outcomes}
+        weights = [w_h[h] * w_o[o] * enrich[(h, o)] for h, o in pair_keys]
+        lead_by_year[year] = _Cumulative(pair_keys, weights)
+        hla_by_year[year] = _Cumulative(mentionable, [w_h[h] for h in mentionable])
+        outcome_by_year[year] = _Cumulative(outcomes, [w_o[o] for o in outcomes])
+
+    # Quota d'articles reserves a chaque paire protectrice : il assure de
+    # franchir INVERSE_MIN_N (sans quoi la depletion serait supprimee comme du
+    # bruit) tout en restant tres en dessous de l'attendu n_a*n_b/N.
+    quota = INVERSE_MIN_N + 1 + n_articles // 1000
+
+    return {
+        "regime": regime,
+        "resolution_of": resolution_of,
+        "parent_of": parent_of,
+        "children_of": children_of,
+        "pop_h": pop_h,
+        "inverse": inverse,
+        "quota": quota,
+        # Paires a effectif reserve (alleles rares) : grand corpus seulement.
+        # Sous RARE_PAIRS_MIN_ARTICLES, leurs ~120 articles reserves
+        # satureraient le corpus et ecraseraient tout le reste du paysage.
+        "rare": (
+            [(pair, MODERATE_COUNT) for pair in MODERATE_PAIRS]
+            + [(pair, rng.randint(*RARE_CLEAR_COUNT)) for pair in RARE_CLEAR_PAIRS]
+        ) if n_articles >= RARE_PAIRS_MIN_ARTICLES else [],
+        "carrier_rates": CARRIER_RATES[regime],
+        "rejection": INVERSE_REJECTION[regime],
+        "negated_rate": negated_rate,
+        "boosts_of": boosts_of,
+        "outcome_era": {
+            (o, y): _outcome_era_factor(o, y) for o in outcomes for y in years
+        },
+        "lead_by_year": lead_by_year,
+        "hla_by_year": hla_by_year,
+        "outcome_by_year": outcome_by_year,
+    }
 
 
-def _inverse_quota(plan, n_articles):
-    """Nombre d'articles reserves a chaque paire protectrice.
+# ---------------------------------------------------------------------
+# Auteurs : equipes nationales autour de chefs de laboratoire
+# ---------------------------------------------------------------------
 
-    Le quota assure deux choses a toute taille de corpus :
-      * franchir INVERSE_MIN_N, sans quoi la depletion serait supprimee comme
-        du bruit et le badge "signal inverse" deviendrait indemontrable ;
-      * rester tres en dessous de l'attendu n_a*n_b/N, sans quoi il n'y aurait
-        plus de depletion du tout.
-    Un quota fixe (et non un poids) rend ce comptage deterministe : le tirage
-    pondere sans remise ne garantissait ni l'un ni l'autre.
+def _build_author_model(rng, n_articles):
+    """Population d'auteurs structuree en equipes.
+
+    * Des CHEFS d'equipe (dernier auteur), environ un pour 27 articles, actifs
+      sur une fenetre de carriere : ce sont les auteurs prolifiques (15 a 40+
+      publications sur un corpus de 3 000 articles).
+    * Chaque chef a un LABORATOIRE de 5 a 12 collaborateurs recurrents, tires
+      du vivier de son pays : les co-auteurs reviennent, la fiche auteur et
+      son reseau de co-signatures ont donc une forme lisible.
+    * Une longue traine d'auteurs occasionnels (1 a 3 articles), et quelques
+      collaborations internationales.
     """
-    pairs = sorted(k for k, v in plan.items() if v["kind"] == "inverse")
-    if not pairs:
-        return {}
-    # Juste au-dessus du plancher, et croissant tres lentement avec le corpus
-    # pour que la depletion (qui, elle, croit lineairement) reste nette.
-    quota = INVERSE_MIN_N + 1 + int(n_articles / 400)
-    return {pair: quota for pair in pairs}
+    used = set()
+
+    def new_name(surnames):
+        for attempt in range(200):
+            surname = rng.choice(surnames)
+            initials = rng.choice(GIVEN_INITIALS)
+            if attempt > 20 or rng.random() < 0.3:
+                initials += rng.choice(GIVEN_INITIALS)
+            name = f"{surname} {initials}"
+            if name not in used:
+                used.add(name)
+                return name
+        raise RuntimeError("vivier de noms epuise")
+
+    total_weight = sum(p[1] for p in COUNTRY_PROFILES)
+    n_heads = max(len(COUNTRY_PROFILES), round(n_articles / 24))
+
+    # Repartition des chefs par pays : plus forts restes, deterministe.
+    quotas = [n_heads * p[1] / total_weight for p in COUNTRY_PROFILES]
+    alloc = [max(1, int(q)) for q in quotas]
+    remainders = sorted(
+        range(len(quotas)), key=lambda i: (-(quotas[i] - int(quotas[i])), i)
+    )
+    i = 0
+    while sum(alloc) < n_heads:
+        alloc[remainders[i % len(remainders)]] += 1
+        i += 1
+
+    heads = []
+    tails_by_country = {}
+    for (country, _, first_year, surnames), n_country_heads in zip(COUNTRY_PROFILES, alloc):
+        tails = []
+        for _ in range(n_country_heads * 20 + 10):
+            tails.append({
+                "name": new_name(surnames),
+                "country": country,
+                "weight": math.exp(rng.gauss(0.0, 0.5)),
+            })
+        tails_by_country[country] = tails
+        # Les laboratoires se partagent le vivier sans chevauchement (sauf
+        # epuisement) : un collaborateur appartient en general a UNE equipe.
+        free = list(tails)
+        rng.shuffle(free)
+        for _ in range(n_country_heads):
+            start = rng.randint(max(first_year, YEAR_MIN - 5), 2016)
+            end = min(YEAR_MAX, start + rng.randint(14, 36))
+            size = rng.randint(5, 12)
+            if len(free) < size:
+                free = list(tails)
+                rng.shuffle(free)
+            lab, free = free[:size], free[size:]
+            heads.append({
+                "name": new_name(surnames),
+                "country": country,
+                # Normalise par la duree de carriere : sans cela, les
+                # carrieres longues accumuleraient mecaniquement les articles.
+                "weight": rng.uniform(0.6, 1.4) * 25.0 / (end - start + 1),
+                "start": start,
+                "end": end,
+                "lab": lab,
+            })
+
+    years, _ = _year_weights()
+    head_by_year = {}
+    for year in years:
+        active = [h for h in heads if h["start"] <= year <= h["end"]] or heads
+        head_by_year[year] = _Cumulative(active, [h["weight"] for h in active])
+
+    heads_by_country = defaultdict(list)
+    for h in heads:
+        heads_by_country[h["country"]].append(h)
+
+    return {
+        "heads": heads,
+        "head_by_year": head_by_year,
+        "heads_by_country": heads_by_country,
+        "tails_by_country": tails_by_country,
+        "countries": [p[0] for p in COUNTRY_PROFILES],
+    }
+
+
+def _article_authors(rng, authors_model, head):
+    """Liste ordonnee des signataires d'un article ; le chef signe en dernier."""
+    n_authors = rng.choices(
+        [1, 2, 3, 4, 5, 6, 7, 8, 10, 12],
+        weights=[3, 8, 14, 18, 17, 14, 10, 8, 5, 3],
+    )[0]
+    country = head["country"]
+    chosen = [head["name"]]
+    others = []
+    tries = 0
+    while len(chosen) < n_authors and tries < n_authors * 4:
+        tries += 1
+        r = rng.random()
+        if r < 0.55 and head["lab"]:
+            cand = _weighted_sample(
+                rng, head["lab"], [t["weight"] for t in head["lab"]], 1
+            )[0]["name"]
+        elif r < 0.62:
+            pool = (
+                authors_model["heads_by_country"][country]
+                if rng.random() < 0.7 else authors_model["heads"]
+            )
+            cand = rng.choice(pool)["name"]
+        elif r < 0.94:
+            cand = rng.choice(authors_model["tails_by_country"][country])["name"]
+        else:
+            other = rng.choice(authors_model["countries"])
+            cand = rng.choice(authors_model["tails_by_country"][other])["name"]
+        if cand not in chosen:
+            chosen.append(cand)
+            others.append(cand)
+    rng.shuffle(others)
+    return others + [head["name"]]
 
 
 def _sentence_for(rng, hla, outcome, negated):
@@ -567,13 +1171,82 @@ def _sentence_for(rng, hla, outcome, negated):
 
     Les spans sont extraits des valeurs effectivement interpolees, donc
     litteralement presents dans la phrase — propriete verifiee par les tests
-    et dont depend le surlignage de l'UI.
+    et dont depend le surlignage de l'UI. Retourne aussi le declencheur de
+    negation, sous-chaine litterale du gabarit negatif retenu.
     """
     outcome_span = rng.choice(OUTCOME_SPANS[outcome])
     hla_span = hla
-    template = NEGATED_TEMPLATE if negated else POSITIVE_TEMPLATE
+    if negated:
+        template, trigger = rng.choice(NEGATED_TEMPLATES)
+    else:
+        template, trigger = rng.choice(POSITIVE_TEMPLATES), ""
     sentence = template.format(hla=hla_span, outcome=outcome_span)
-    return sentence, hla_span, outcome_span
+    return sentence, hla_span, outcome_span, trigger
+
+
+def _article_entities(rng, model, year, forced):
+    """Ensembles (alleles, complications) cites par un article.
+
+    Retourne deux listes ordonnees ; l'article emettra une mention pour
+    chaque paire du produit cartesien.
+    """
+    lead_h, lead_o = model["lead_by_year"][year].pick(rng)
+    hlas = [lead_h]
+    outs = [lead_o]
+
+    # Compagnon hierarchique : un 4-digit cite souvent son groupe 2-digit,
+    # et un 2-digit parfois l'un de ses 4-digit.
+    resolution = model["resolution_of"][lead_h]
+    if resolution == "4-digit" and rng.random() < 0.35:
+        hlas.append(model["parent_of"][lead_h])
+    elif resolution == "2-digit" and model["children_of"].get(lead_h) and rng.random() < 0.2:
+        kids = model["children_of"][lead_h]
+        # Un enfant de popularite nulle (allele rare) n'est jamais tire.
+        picked = _weighted_sample(rng, kids, [model["pop_h"][k] for k in kids], 1)
+        hlas.extend(picked)
+
+    for _ in range(rng.choices([0, 1, 2], weights=[60, 30, 10])[0]):
+        h = model["hla_by_year"][year].pick(rng)
+        if h not in hlas:
+            hlas.append(h)
+    for _ in range(rng.choices([0, 1, 2], weights=[45, 40, 15])[0]):
+        o = model["outcome_by_year"][year].pick(rng)
+        if o not in outs:
+            outs.append(o)
+
+    # Co-citations conditionnelles des paires planifiees (cf. `boost`).
+    for h in list(hlas):
+        for o, q in model["boosts_of"].get(h, ()):
+            if o not in outs and model["outcome_era"][(o, year)] > 0 and rng.random() < q:
+                outs.append(o)
+
+    # Porteurs des paires protectrices.
+    carrier_h, carrier_o = model["carrier_rates"]
+    for h, o in model["inverse"]:
+        if carrier_h and rng.random() < carrier_h and h not in hlas:
+            hlas.append(h)
+        if carrier_o and rng.random() < carrier_o and o not in outs:
+            outs.append(o)
+
+    if forced is not None:
+        h, o = forced
+        if h not in hlas:
+            hlas.append(h)
+        if o not in outs:
+            outs.append(o)
+
+    # Evitement : hors quota, une paire protectrice n'est (presque) jamais
+    # co-citee. On retire l'entite secondaire, jamais la paire principale.
+    for h, o in model["inverse"]:
+        if (h, o) == forced or h not in hlas or o not in outs:
+            continue
+        if rng.random() < model["rejection"]:
+            if o != lead_o:
+                outs.remove(o)
+            elif h != lead_h:
+                hlas.remove(h)
+
+    return hlas, outs
 
 
 def _generate(rng, n_articles):
@@ -581,25 +1254,32 @@ def _generate(rng, n_articles):
     pair_mentions, associations), tous deja ordonnes pour l'ecriture."""
 
     hla_rows = build_hla_entities()
+    model = _build_model(rng, hla_rows, n_articles)
+    authors_model = _build_author_model(rng, n_articles)
+    years, year_weights = _year_weights()
+    year_picker = _Cumulative(years, year_weights)
 
-    # --- Articles ------------------------------------------------------
+    # File deterministe des paires protectrices a placer, une par article,
+    # etalee sur le corpus pour que first_year et les timelines restent
+    # plausibles.
+    forced_queue = []
+    for pair in sorted(model["inverse"]):
+        forced_queue.extend([pair] * model["quota"])
+    for pair, count in model["rare"]:
+        forced_queue.extend([pair] * count)
+    # Entrelace les paires plutot que de les placer en blocs : chaque paire
+    # est ainsi etalee sur toute la periode couverte.
+    forced_queue = [
+        forced_queue[i] for i in sorted(
+            range(len(forced_queue)),
+            key=lambda i: (forced_queue[:i].count(forced_queue[i]), i),
+        )
+    ]
+    forced_every = max(1, n_articles // (len(forced_queue) + 1))
+
     pmids = set()
     articles = []
-    author_names, author_weights = _make_authors(rng)
     authors = []
-
-    plan = _build_pair_plan(rng, hla_rows, n_articles)
-    # Les paires a quota (poids nul) sortent du tirage pondere : elles sont
-    # injectees explicitement, pas tirees.
-    plan_keys = [k for k in sorted(plan) if plan[k]["weight"] > 0.0]
-    plan_weights = [plan[k]["weight"] for k in plan_keys]
-
-    # File deterministe des paires protectrices a placer, une par article.
-    quota = _inverse_quota(plan, n_articles)
-    forced_queue = []
-    for pair in sorted(quota):
-        forced_queue.extend([pair] * quota[pair])
-
     pair_mentions = []
 
     for article_idx in range(n_articles):
@@ -609,37 +1289,30 @@ def _generate(rng, n_articles):
                 pmids.add(pmid)
                 break
 
-        year = _draw_year(rng)
-        journal, abbrev = rng.choice(JOURNALS)
+        year = year_picker.pick(rng)
+        head = authors_model["head_by_year"][year].pick(rng)
+        country = head["country"]
 
-        # Les paires citees par cet article : tirage pondere par le plan.
-        # Un corpus reduit doit rester statistiquement exploitable : les
-        # marges n_hla_total / n_outcome_total y seraient sinon trop faibles
-        # pour que le test de Fisher ait la moindre puissance, et aucun signal
-        # (direct ou inverse) ne pourrait etre demontre. On cite donc un peu
-        # plus de paires par article quand le corpus est petit.
-        if n_articles < 300:
-            n_pairs = rng.choices([2, 3, 4, 5], weights=[15, 30, 35, 20])[0]
-        else:
-            n_pairs = rng.choices([1, 2, 3, 4], weights=[35, 35, 20, 10])[0]
-        pairs = _weighted_sample(rng, plan_keys, plan_weights, n_pairs)
+        journals = [j for j in JOURNALS if j[3] <= year]
+        journal, abbrev, _, _ = rng.choices(journals, weights=[j[2] for j in journals])[0]
 
-        # Puis, le cas echeant, la paire protectrice due a cet article. On
-        # etale le quota sur le corpus plutot que de le concentrer en tete,
-        # pour que first_year et les timelines restent plausibles.
-        if forced_queue and article_idx % max(1, n_articles // (len(forced_queue) + 1)) == 0:
+        forced = None
+        if forced_queue and article_idx % forced_every == 0:
             forced = forced_queue.pop(0)
-            if forced not in pairs:
-                pairs.append(forced)
 
-        lead_hla, lead_outcome = pairs[0]
+        hlas, outs = _article_entities(rng, model, year, forced)
+        pairs = [(h, o) for h in hlas for o in outs]
+
+        lead_hla, lead_outcome = hlas[0], outs[0]
         lead_label = OUTCOME_SPANS[lead_outcome][0]
         title = rng.choice(TITLE_OPENERS).format(hla=lead_hla, outcome=lead_label)
+        title = title[0].upper() + title[1:]
 
         abstract = " ".join([
             rng.choice(ABSTRACT_BACKGROUND),
             rng.choice(ABSTRACT_METHODS),
-            rng.choice(ABSTRACT_RESULTS),
+            f"Patients were transplanted in {country}.",
+            rng.choice(ABSTRACT_RESULTS).format(n=rng.randint(60, 4000)),
             rng.choice(ABSTRACT_CONCLUSION),
         ])
 
@@ -651,7 +1324,7 @@ def _generate(rng, n_articles):
             "year": year,
             "journal": journal,
             "journal_abbrev": abbrev,
-            "country": rng.choice(COUNTRIES),
+            "country": country,
             "language": "eng",
             # Les articles anciens ont eu plus de temps pour etre cites.
             "cited_by": max(0, int(rng.expovariate(1 / 18.0) * (1 + (YEAR_MAX - year) / 12))),
@@ -662,23 +1335,17 @@ def _generate(rng, n_articles):
         })
 
         # --- Auteurs ---
-        n_authors = rng.choices([2, 3, 4, 5, 6, 8], weights=[10, 20, 25, 20, 15, 10])[0]
-        for position, name in enumerate(
-            _weighted_sample(rng, author_names, author_weights, n_authors), start=1
-        ):
+        for position, name in enumerate(_article_authors(rng, authors_model, head), start=1):
             authors.append({"pmid": pmid, "author": name, "position": position})
 
         # --- pair_mentions ---
         # Emis AVANT toute agregation : les associations en decoulent.
-        seen_idx = set()
-        for hla, outcome in pairs:
-            sentence_idx = rng.randint(0, 9)
-            while sentence_idx in seen_idx:
-                sentence_idx = (sentence_idx + 1) % 10
-            seen_idx.add(sentence_idx)
-
-            negated = rng.random() < NEGATED_RATE
-            sentence, hla_span, outcome_span = _sentence_for(rng, hla, outcome, negated)
+        slots = rng.sample(range(max(12, len(pairs) + 2)), len(pairs))
+        for (hla, outcome), sentence_idx in zip(pairs, slots):
+            negated = rng.random() < model["negated_rate"][(hla, outcome)]
+            sentence, hla_span, outcome_span, trigger = _sentence_for(
+                rng, hla, outcome, negated
+            )
             pair_mentions.append({
                 "pmid": pmid,
                 "hla": hla,
@@ -687,7 +1354,7 @@ def _generate(rng, n_articles):
                 "hla_span": hla_span,
                 "outcome_span": outcome_span,
                 "polarity": "negated" if negated else "positive",
-                "negation_trigger": NEGATION_TRIGGER if negated else "",
+                "negation_trigger": trigger,
                 "sentence_idx": sentence_idx,
             })
 
@@ -819,7 +1486,7 @@ def _write_csv(path, columns, rows):
             writer.writerow(row)
 
 
-def main(out_dir, n_articles=400, seed=42):
+def main(out_dir, n_articles=DEFAULT_N_ARTICLES, seed=42):
     """Genere les cinq CSV synthetiques dans out_dir (cree si absent).
 
     Deterministe : a seed fixee, les fichiers sont identiques octet pour octet.
@@ -851,7 +1518,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--out", default="data/synthetic",
                         help="Repertoire de sortie (cree si absent).")
-    parser.add_argument("--n-articles", type=int, default=400,
+    parser.add_argument("--n-articles", type=int, default=DEFAULT_N_ARTICLES,
                         help="Nombre d'articles a generer.")
     parser.add_argument("--seed", type=int, default=42,
                         help="Graine aleatoire (determinisme).")

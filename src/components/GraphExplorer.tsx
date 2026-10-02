@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useOrganSelection } from "@/components/organ/useOrganSelection";
+import { ORGAN_PARAM, organSlug } from "@/lib/organ";
 import {
   ArrowUpRight,
   Crosshair,
@@ -116,6 +118,8 @@ export default function GraphExplorer({
   minSignal,
 }: GraphExplorerProps) {
   const router = useRouter();
+  // Strate d'organe : lue dans l'URL (`?organe=`), comme sur toutes les pages.
+  const organ = useOrganSelection();
   const [graph, setGraph] = useState<Neighborhood | null>(null);
   const [pending, setPending] = useState(true);
   /**
@@ -143,6 +147,8 @@ export default function GraphExplorer({
 
     const params = new URLSearchParams({ center, depth: String(depth) });
     if (minSignal) params.set("minSignal", minSignal);
+    const slug = organSlug(organ);
+    if (slug) params.set(ORGAN_PARAM, slug);
 
     fetch(`/api/graph?${params.toString()}`)
       .then(async (res) => {
@@ -163,14 +169,14 @@ export default function GraphExplorer({
     return () => {
       cancelled = true;
     };
-  }, [center, depth, minSignal]);
+  }, [center, depth, minSignal, organ]);
 
   /** Recentrage : `graphHref` encode la cle (`*`, `:`) sans perte. */
   const recenter = useCallback(
     (id: string) => {
-      router.push(graphHref({ center: id, depth, minSignal }), { scroll: false });
+      router.push(graphHref({ center: id, depth, minSignal, organ }), { scroll: false });
     },
-    [router, depth, minSignal],
+    [router, depth, minSignal, organ],
   );
 
   // ── Disposition (sur le voisinage COMPLET : stable sous filtre) ──
@@ -351,7 +357,9 @@ export default function GraphExplorer({
               options={[1, 2, 3].map((d) => ({ value: d, label: String(d) }))}
               value={depth}
               onChange={(d) =>
-                router.push(graphHref({ center, depth: d, minSignal }), { scroll: false })
+                router.push(graphHref({ center, depth: d, minSignal, organ }), {
+                  scroll: false,
+                })
               }
             />
           </div>
@@ -472,7 +480,7 @@ export default function GraphExplorer({
           {SIGNAL_LABELS[minSignal].label} » ont été écartées avant le
           parcours. Elles restent présentes dans le corpus.{" "}
           <Link
-            href={graphHref({ center, depth })}
+            href={graphHref({ center, depth, organ })}
             className="font-medium underline underline-offset-2"
           >
             Retirer ce filtre
@@ -569,6 +577,7 @@ function DetailPanel({
   depth: number;
   onSelect: (id: string | null) => void;
 }) {
+  const organ = useOrganSelection();
   const [expanded, setExpanded] = useState(false);
   useEffect(() => setExpanded(false), [node.id]);
   const shown = expanded ? rows : rows.slice(0, 10);
@@ -611,7 +620,7 @@ function DetailPanel({
       <div className="mt-3 flex flex-wrap gap-2">
         {!isCenter && (
           <Link
-            href={graphHref({ center: node.id, depth })}
+            href={graphHref({ center: node.id, depth, organ })}
             scroll={false}
             className={buttonClasses("primary", "sm")}
           >
@@ -619,7 +628,7 @@ function DetailPanel({
             Recentrer ici
           </Link>
         )}
-        <Link href={entityHref(node.type, node.id)} className={buttonClasses("secondary", "sm")}>
+        <Link href={entityHref(node.type, node.id, organ)} className={buttonClasses("secondary", "sm")}>
           Ouvrir la fiche
           <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
         </Link>
@@ -706,6 +715,7 @@ function EdgeList({
   centerId: string;
   onMore: () => void;
 }) {
+  const organ = useOrganSelection();
   if (total === 0) {
     return (
       <p className="rounded-xl border border-line bg-surface p-6 text-sm text-fg-muted">
@@ -737,12 +747,12 @@ function EdgeList({
                 <tr key={e.id} className={cn(!e.isSignificant && "text-fg-muted")}>
                   <td className="px-3 py-2">
                     <span className="inline-flex items-center gap-1.5">
-                      <Link href={entityHref("hla", hla.id)} className="allele link">
+                      <Link href={entityHref("hla", hla.id, organ)} className="allele link">
                         {hla.label}
                       </Link>
                       {hla.id !== centerId && (
                         <Link
-                          href={graphHref({ center: hla.id, depth })}
+                          href={graphHref({ center: hla.id, depth, organ })}
                           scroll={false}
                           className="text-fg-faint hover:text-primary"
                           aria-label={`Recentrer le graphe sur ${hla.label}`}
@@ -760,12 +770,12 @@ function EdgeList({
                         className="h-2 w-2 shrink-0 rounded-[2px]"
                         style={{ background: categoryColor(out.category).css }}
                       />
-                      <Link href={entityHref("outcome", out.id)} className="link">
+                      <Link href={entityHref("outcome", out.id, organ)} className="link">
                         {out.label}
                       </Link>
                       {out.id !== centerId && (
                         <Link
-                          href={graphHref({ center: out.id, depth })}
+                          href={graphHref({ center: out.id, depth, organ })}
                           scroll={false}
                           className="text-fg-faint hover:text-primary"
                           aria-label={`Recentrer le graphe sur ${out.label}`}

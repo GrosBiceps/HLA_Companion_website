@@ -22,6 +22,8 @@ import {
   AlleleBreadcrumbTrail,
   AlleleFamily,
 } from "@/components/entity/AlleleHierarchy";
+import { OrganBreakdown } from "@/components/organ/OrganBreakdown";
+import { OrganScopeNote } from "@/components/organ/OrganScope";
 import { ArticleSummaryList } from "@/components/entity/ArticleSummaryList";
 import { CompactAssociationList } from "@/components/entity/CompactAssociationList";
 import { OutcomeProfileChart } from "@/components/entity/OutcomeProfileChart";
@@ -37,15 +39,27 @@ import {
 } from "@/lib/format";
 import {
   getAlleleAncestry,
+  getAlleleArticleCount,
   getAlleleByKey,
   getAlleleChildren,
+  getAlleleOrganCounts,
   getAlleleSiblings,
   getAlleleYearCounts,
   getArticleCountsByHla,
   getAssociationsForAllele,
+  getCorpusStats,
+  getOrgans,
   getOutcomeCount,
   getTopArticlesForAllele,
 } from "@/lib/queries";
+import {
+  ALL_ORGANS,
+  organFromPage,
+  organLabel,
+  organShortLabel,
+  withOrgan,
+  type PageSearchParams,
+} from "@/lib/organ";
 import { getAlleleChildSummaries } from "@/lib/allele-nav";
 import { getSerotypesForAllele } from "@/lib/serotypes";
 import type { AssociationRow } from "@/lib/types";
@@ -74,6 +88,11 @@ import type { AssociationRow } from "@/lib/types";
  *
  * Aucune metrique brute hors du depliant « Détail statistique » des cartes.
  *
+ * ORGANE. `?organe=coeur` recalcule toute la fiche sur la strate de l'organe :
+ * associations (avec leur propre denominateur), effectifs, chronologie,
+ * articles. La carte « Par organe » ventile les articles de l'allele par
+ * organe et mene d'un organe a l'autre ; tous les liens reportent la strate.
+ *
  * ARTICLES DISTINCTS. `hla_entities.n_mentions` compte des lignes de
  * mention ; l'en-tete affiche le nombre d'ARTICLES distincts, la quantite
  * verifiable (cf. bloc « fiches enrichies » de queries.ts).
@@ -81,6 +100,7 @@ import type { AssociationRow } from "@/lib/types";
 
 /** Params de route Next 16 : asynchrones. */
 type Params = { params: Promise<{ hla: string }> };
+type Props = Params & { searchParams?: PageSearchParams };
 
 /** Decodage tolerant : une sequence percent invalide ne doit pas lever. */
 function safeDecode(raw: string): string {
@@ -141,29 +161,35 @@ function resolutionLabel(resolution: string): string {
   }
 }
 
-export default async function AllelePage({ params }: Params) {
+export default async function AllelePage({ params, searchParams }: Props) {
   const hla = safeDecode((await params).hla);
+  const organ = await organFromPage(searchParams);
 
   const allele = getAlleleByKey(hla);
   if (!allele) notFound();
 
-  const associations = getAssociationsForAllele(hla);
+  const associations = getAssociationsForAllele(hla, organ);
   const ancestry = getAlleleAncestry(hla);
   const children = getAlleleChildren(hla);
   const siblings = getAlleleSiblings(hla);
   const serotypes = getSerotypesForAllele(hla);
-  const counts = getArticleCountsByHla();
-  const years = getAlleleYearCounts(hla);
-  const topArticles = getTopArticlesForAllele(hla, 6);
+  const counts = getArticleCountsByHla(organ);
+  const years = getAlleleYearCounts(hla, organ);
+  const topArticles = getTopArticlesForAllele(hla, 6, organ);
   const groups = groupByCategory(associations);
+  const organs = getOrgans();
+  const organCounts = getAlleleOrganCounts(hla);
+  const stratum = organs.find((o) => o.key === organ);
+  const nCorpus = getCorpusStats().nArticles;
+  const baseHref = `/allele/${encodeURIComponent(hla)}`;
 
   const parent = ancestry.length >= 2 ? ancestry[ancestry.length - 2] : null;
   // Navigation de resolution : enfants d'un 2-digit, ou freres d'un 4-digit.
   const childSummaries =
-    allele.resolution === "2-digit" ? getAlleleChildSummaries(hla) : [];
+    allele.resolution === "2-digit" ? getAlleleChildSummaries(hla, organ) : [];
   const siblingSummaries =
     allele.resolution === "4-digit" && parent
-      ? getAlleleChildSummaries(parent.hla)
+      ? getAlleleChildSummaries(parent.hla, organ)
       : [];
   const nArticles = counts.get(hla) ?? 0;
   const span = activeYears(years);
@@ -171,14 +197,22 @@ export default async function AllelePage({ params }: Params) {
   const nInverse = associations.filter(
     (a) => a.signalLevel === "inverse",
   ).length;
-  const nOutcomesTotal = getOutcomeCount();
-  const graphHref = `/graph?center=${encodeURIComponent(hla)}`;
+  const nOutcomesTotal = getOutcomeCount(organ);
+  const graphHref = withOrgan(`/graph?center=${encodeURIComponent(hla)}`, organ);
+  const breakdown = (
+    <OrganBreakdown
+      counts={organCounts}
+      selected={organ}
+      hrefFor={(o) => withOrgan(baseHref, o)}
+      total={getAlleleArticleCount(hla)}
+    />
+  );
   const isLocusNode = allele.resolution === "class";
 
   return (
     <div className="space-y-8 sm:space-y-10">
       <div className="space-y-4">
-        <AlleleBreadcrumbTrail ancestry={ancestry} />
+        <AlleleBreadcrumbTrail ancestry={ancestry} organ={organ} />
 
         <PageHeader
           eyebrow="Fiche allèle"
@@ -213,14 +247,16 @@ export default async function AllelePage({ params }: Params) {
             <strong className="tabular font-semibold text-fg">
               {plural(nArticles, "article")}
             </strong>{" "}
-            du corpus
+            {organ === ALL_ORGANS ? "du corpus" : `de la strate ${organShortLabel(organ)}`}
             {associations.length > 0 ? (
               <>
                 , co-mentionné avec{" "}
                 <strong className="tabular font-semibold text-fg">
                   {plural(associations.length, "complication")}
                 </strong>{" "}
-                sur les {nOutcomesTotal} du référentiel.
+                {organ === ALL_ORGANS
+                  ? `sur les ${nOutcomesTotal} du référentiel.`
+                  : `sur les ${nOutcomesTotal} qui s'appliquent à cet organe.`}
               </>
             ) : (
               "."
@@ -231,7 +267,7 @@ export default async function AllelePage({ params }: Params) {
               <span className="eyebrow">
                 {serotypes.length > 1 ? "Sérotypes" : "Sérotype"}
               </span>
-              <SerotypeBadges serotypes={serotypes} />
+              <SerotypeBadges serotypes={serotypes} organ={organ} />
               <span className="text-2xs text-fg-subtle">
                 table de correspondance de référence
                 {allele.resolution === "2-digit" && serotypes.some((s) => s.partial)
@@ -242,6 +278,13 @@ export default async function AllelePage({ params }: Params) {
           ) : null}
         </PageHeader>
       </div>
+
+      <OrganScopeNote
+        organ={organ}
+        nArticles={stratum?.nArticles}
+        nTotal={nCorpus}
+        baseHref={baseHref}
+      />
 
       {/*
         Cadrage propre a la fiche, qui s'ajoute au rappel global du layout : il
@@ -277,6 +320,7 @@ export default async function AllelePage({ params }: Params) {
         parentCount={parent ? (counts.get(parent.hla) ?? 0) : 0}
         children={childSummaries}
         siblings={siblingSummaries}
+        organ={organ}
       />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -328,16 +372,24 @@ export default async function AllelePage({ params }: Params) {
               siblings={[]}
               children={children}
               counts={counts}
+              organ={organ}
             />
           </div>
         </Card>
       ) : null}
 
       {associations.length === 0 ? (
-        <EmptyState
-          title="Aucune complication co-mentionnée"
-          description="Aucune complication n'est co-mentionnée avec cette entité dans ce corpus. Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée telle qu'elle a été extraite."
-        />
+        <>
+          <EmptyState
+            title="Aucune complication co-mentionnée"
+            description={
+              organ === ALL_ORGANS
+                ? "Aucune complication n'est co-mentionnée avec cette entité dans ce corpus. Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée telle qu'elle a été extraite."
+                : `Aucune complication n'est co-mentionnée avec cette entité dans la strate « ${organLabel(organ)} ». Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée pour cet organe — la répartition ci-dessous montre où l'entité apparaît.`
+            }
+          />
+          <div className="max-w-sm">{breakdown}</div>
+        </>
       ) : (
         <>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -353,6 +405,7 @@ export default async function AllelePage({ params }: Params) {
             </Card>
 
             <div className="space-y-6">
+              {breakdown}
               <Card>
                 <CardHeader eyebrow="Chronologie" title="Articles par année" />
                 <div className="mt-4">
@@ -372,6 +425,7 @@ export default async function AllelePage({ params }: Params) {
                     siblings={siblings}
                     children={children}
                     counts={counts}
+                    organ={organ}
                   />
                 </div>
               </Card>
@@ -407,11 +461,11 @@ export default async function AllelePage({ params }: Params) {
                         id={coAnchor(row.outcome)}
                         className="scroll-mt-40"
                       >
-                        <AssociationCard association={row} />
+                        <AssociationCard association={row} organ={organ} />
                       </div>
                     ))}
                     {weak.length > 0 ? (
-                      <CompactAssociationList rows={weak} show="outcome" />
+                      <CompactAssociationList rows={weak} show="outcome" organ={organ} />
                     ) : null}
                   </div>
                 );
@@ -427,6 +481,7 @@ export default async function AllelePage({ params }: Params) {
               <ArticleSummaryList
                 articles={topArticles}
                 partnerUnit="complication"
+                organ={organ}
               />
             </Section>
           ) : null}

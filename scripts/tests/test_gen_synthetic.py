@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import gen_synthetic
-from labels import OUTCOME_LABELS
+from labels import OUTCOME_LABELS, ORGAN_KEYS
 
 
 def read_csv(path):
@@ -33,6 +33,7 @@ class TestGenSynthetic(unittest.TestCase):
             "hla_entities.csv",
             "pair_mentions.csv",
             "associations.csv",
+            "organs.csv",
         ]:
             self.assertTrue((self.out / name).exists(), f"{name} manquant")
 
@@ -85,15 +86,23 @@ class TestGenSynthetic(unittest.TestCase):
             self.assertEqual(n, int(row["n_positive"]) + int(row["n_negated"]))
 
     def test_associations_match_pair_mention_counts(self):
-        # Validation V3 du builder : tout agregat est derivable.
+        # Validation V3 du builder : tout agregat est derivable, DANS SA STRATE.
         from collections import Counter
 
-        counts = Counter(
-            (r["hla"], r["outcome"]) for r in read_csv(self.out / "pair_mentions.csv")
-        )
-        for row in read_csv(self.out / "associations.csv"):
-            key = (row["hla"], row["outcome"])
+        organs_of = {
+            r["pmid"]: r["organs"].split(";")
+            for r in read_csv(self.out / "articles.csv")
+        }
+        counts = Counter()
+        for r in read_csv(self.out / "pair_mentions.csv"):
+            for stratum in ["all"] + organs_of[r["pmid"]]:
+                counts[(stratum, r["hla"], r["outcome"])] += 1
+        rows = read_csv(self.out / "associations.csv")
+        for row in rows:
+            key = (row["organ"], row["hla"], row["outcome"])
             self.assertEqual(int(row["n_cooccurrence"]), counts[key], f"{key}")
+        # ... et reciproquement : aucune paire observee sans ligne.
+        self.assertEqual({(r["organ"], r["hla"], r["outcome"]) for r in rows}, set(counts))
 
     def test_metrics_within_bounds(self):
         for row in read_csv(self.out / "associations.csv"):
@@ -182,25 +191,32 @@ class TestAssociationCoherence(unittest.TestCase):
 
     def test_marginals_match_the_actual_data(self):
         # n_hla_total / n_outcome_total / n_universe doivent decrire le corpus
-        # reellement emis, pas des nombres decoratifs.
+        # reellement emis (la STRATE de la ligne), pas des nombres decoratifs.
         from collections import defaultdict
 
+        organs_of = {a["pmid"]: a["organs"].split(";") for a in self.articles}
         hla_articles = defaultdict(set)
         outcome_articles = defaultdict(set)
         for m in self.mentions:
-            hla_articles[m["hla"]].add(m["pmid"])
-            outcome_articles[m["outcome"]].add(m["pmid"])
+            for stratum in ["all"] + organs_of[m["pmid"]]:
+                hla_articles[(stratum, m["hla"])].add(m["pmid"])
+                outcome_articles[(stratum, m["outcome"])].add(m["pmid"])
+        universe = defaultdict(int, {"all": len(self.articles)})
+        for organs in organs_of.values():
+            for organ in organs:
+                universe[organ] += 1
 
         for row in self.assoc:
+            st = row["organ"]
             self.assertEqual(
-                int(row["n_hla_total"]), len(hla_articles[row["hla"]]),
-                f"n_hla_total incoherent pour {row['hla']}",
+                int(row["n_hla_total"]), len(hla_articles[(st, row["hla"])]),
+                f"n_hla_total incoherent pour {st}/{row['hla']}",
             )
             self.assertEqual(
-                int(row["n_outcome_total"]), len(outcome_articles[row["outcome"]]),
-                f"n_outcome_total incoherent pour {row['outcome']}",
+                int(row["n_outcome_total"]), len(outcome_articles[(st, row["outcome"])]),
+                f"n_outcome_total incoherent pour {st}/{row['outcome']}",
             )
-            self.assertEqual(int(row["n_universe"]), len(self.articles))
+            self.assertEqual(int(row["n_universe"]), universe[st])
 
     def test_all_probability_columns_within_bounds(self):
         # La suite du brief ne testait ni fdr_two_sided ni aucune p-value.
@@ -257,6 +273,7 @@ class TestAssociationCoherence(unittest.TestCase):
             "hla_entities.csv",
             "pair_mentions.csv",
             "associations.csv",
+            "organs.csv",
         ]
         with tempfile.TemporaryDirectory() as d2:
             gen_synthetic.main(out_dir=Path(d2), n_articles=200, seed=7)
@@ -290,12 +307,13 @@ class TestDefaultCorpusLandscape(unittest.TestCase):
         cls.authors = read_csv(cls.out / "authors.csv")
         cls.mentions = read_csv(cls.out / "pair_mentions.csv")
         cls.level = {
-            (r["hla"], r["outcome"]): compute_signal_level(
+            (r["organ"], r["hla"], r["outcome"]): compute_signal_level(
                 int(r["n_cooccurrence"]), float(r["fdr"]),
                 float(r["odds_ratio"]), float(r["fdr_two_sided"]),
             )
             for r in cls.assoc
         }
+        cls.all_levels = {k[1:]: v for k, v in cls.level.items() if k[0] == "all"}
 
     @classmethod
     def tearDownClass(cls):
@@ -303,7 +321,7 @@ class TestDefaultCorpusLandscape(unittest.TestCase):
 
     def test_default_size(self):
         self.assertEqual(len(self.articles), gen_synthetic.DEFAULT_N_ARTICLES)
-        self.assertGreaterEqual(gen_synthetic.DEFAULT_N_ARTICLES, 2000)
+        self.assertGreaterEqual(gen_synthetic.DEFAULT_N_ARTICLES, 6000)
 
     def test_vocabulary_is_rich(self):
         from collections import Counter
@@ -312,7 +330,7 @@ class TestDefaultCorpusLandscape(unittest.TestCase):
         self.assertGreaterEqual(by_res["2-digit"], 125)
         self.assertLessEqual(by_res["2-digit"], 190)
         self.assertGreaterEqual(by_res["4-digit"], 500)
-        self.assertLessEqual(by_res["4-digit"], 900)
+        self.assertLessEqual(by_res["4-digit"], 1100)
         keys = {r["hla"] for r in self.hla}
         self.assertIn(gen_synthetic.SHOWCASE_HLA, keys)
         # Des alleles reels, courants en transplantation.
@@ -364,24 +382,47 @@ class TestDefaultCorpusLandscape(unittest.TestCase):
         self.assertGreater(counts[0], 20 * (sum(tail) / len(tail)))
 
     def test_every_outcome_is_covered(self):
-        self.assertEqual({r["outcome"] for r in self.assoc}, set(OUTCOME_LABELS))
+        covered = {r["outcome"] for r in self.assoc if r["organ"] == "all"}
+        self.assertEqual(covered, set(OUTCOME_LABELS))
 
     def test_every_signal_level_is_demonstrable(self):
         from collections import Counter
 
-        counts = Counter(self.level.values())
-        for level in ("inverse", "strong", "clear", "moderate", "weak"):
-            self.assertGreaterEqual(counts[level], 5, f"trop peu de '{level}'")
-        # Le paysage reste domine par l'absence de signal, comme un vrai
-        # corpus de co-occurrences.
-        self.assertGreater(counts["weak"], len(self.assoc) / 2)
+        # Strate « tous les organes » et strate de reference (rein) : tous les
+        # niveaux sont demontrables.
+        for stratum in ("all", "kidney"):
+            counts = Counter(v for k, v in self.level.items() if k[0] == stratum)
+            for level in ("inverse", "strong", "clear", "moderate", "weak"):
+                self.assertGreaterEqual(
+                    counts[level], 5, f"{stratum}: trop peu de '{level}'"
+                )
+            # Le paysage reste domine par l'absence de signal, comme un vrai
+            # corpus de co-occurrences.
+            self.assertGreater(counts["weak"], sum(counts.values()) / 2)
+
+    def test_every_organ_stratum_shows_some_signal(self):
+        # Chaque organe a au moins une co-occurrence marquee a montrer, meme
+        # l'intestin (~200 articles).
+        from collections import Counter
+
+        for organ in ORGAN_KEYS:
+            counts = Counter(v for k, v in self.level.items() if k[0] == organ)
+            marked = sum(n for lvl, n in counts.items() if lvl != "weak")
+            self.assertGreaterEqual(marked, 1, f"{organ}: aucun signal")
 
     def test_showcase_allele_keeps_its_contract(self):
         showcase = gen_synthetic.SHOWCASE_HLA
-        for outcome in ("DSA", "ABMR", "graft_loss"):
-            self.assertEqual(self.level[(showcase, outcome)], "strong", outcome)
-        for outcome in ("NODAT", "skin_cancer", "BK_nephropathy"):
-            self.assertEqual(self.level[(showcase, outcome)], "weak", outcome)
+        for stratum in ("all", "kidney"):
+            for outcome in ("DSA", "ABMR", "graft_loss"):
+                self.assertEqual(
+                    self.level[(stratum, showcase, outcome)], "strong",
+                    f"{stratum}/{outcome}",
+                )
+            for outcome in ("NODAT", "skin_cancer", "BK_nephropathy"):
+                self.assertEqual(
+                    self.level[(stratum, showcase, outcome)], "weak",
+                    f"{stratum}/{outcome}",
+                )
 
     def test_years_span_the_period_and_grow(self):
         from collections import Counter

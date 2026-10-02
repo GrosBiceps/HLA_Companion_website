@@ -15,7 +15,8 @@ import {
 } from "@/lib/labels";
 import { EXTRACTION_METRICS } from "@/lib/extraction-metrics";
 import { formatInt } from "@/lib/format";
-import { getCorpusStats } from "@/lib/queries";
+import { OrganChip } from "@/components/organ/OrganChip";
+import { getCorpusStats, getOrgans } from "@/lib/queries";
 import type { SignalLevel } from "@/lib/types";
 
 /**
@@ -46,6 +47,7 @@ export const metadata: Metadata = {
 const TOC = [
   { id: "pipeline", label: "De PubMed au site" },
   { id: "corpus", label: "Corpus A et B" },
+  { id: "organes", label: "Organes et strates" },
   { id: "co-occurrence", label: "Co-occurrence" },
   { id: "mesures", label: "Les mesures" },
   { id: "signal", label: "Niveaux de signal" },
@@ -119,25 +121,25 @@ const PIPELINE: { step: string; title: string; body: string; where: string }[] =
     {
       step: "1",
       title: "Interrogation PubMed",
-      body: "Requête figée sur la transplantation rénale et le système HLA ; notices XML (titre, résumé, auteurs, MeSH).",
+      body: "Requête figée sur la transplantation et le système HLA, une par organe (seule la requête sur le rein est un corpus réel à ce jour) ; notices XML (titre, résumé, auteurs, MeSH).",
       where: "Pipeline Python",
     },
     {
       step: "2",
       title: "Filtrage de pertinence",
-      body: "Dédoublonnage et exclusion des articles hors greffe rénale. Deux corrections du filtre ont retiré des contaminations inter-organes.",
+      body: "Dédoublonnage et exclusion des articles hors de l'organe visé. Deux corrections du filtre ont retiré des contaminations inter-organes ; un article qui concerne vraiment deux organes est rattaché aux deux.",
       where: "Pipeline Python",
     },
     {
       step: "3",
       title: "Extraction NLP",
-      body: "Repérage des allèles (nomenclature IPD-IMGT) et des complications (lexique de 21 termes), phrase par phrase, avec détection de négation.",
+      body: "Repérage des allèles (nomenclature IPD-IMGT) et des complications (lexique de 21 termes pour le rein, étendu à 46 sur l'ensemble des organes), phrase par phrase, avec détection de négation.",
       where: "Pipeline Python",
     },
     {
       step: "4",
       title: "Statistiques",
-      body: "Pour chaque paire allèle × complication : table 2 × 2 sur les articles, NPMI, odds ratio, tests de Fisher, correction FDR.",
+      body: "Pour chaque paire allèle × complication, dans chaque strate (tous les organes, puis chaque organe) : table 2 × 2 sur les articles de la strate, NPMI, odds ratio, tests de Fisher, correction FDR.",
       where: "Pipeline Python",
     },
     {
@@ -149,7 +151,7 @@ const PIPELINE: { step: string; title: string; body: string; where: string }[] =
     {
       step: "6",
       title: "Base SQLite scellée",
-      body: "Construction, 8 validations bloquantes, index de recherche, empreinte SHA-256. Le site la lit en lecture seule.",
+      body: "Construction, validations bloquantes (dont celles des organes et des strates), index de recherche, empreinte SHA-256. Le site la lit en lecture seule.",
       where: "Ce dépôt",
     },
   ];
@@ -157,6 +159,7 @@ const PIPELINE: { step: string; title: string; body: string; where: string }[] =
 export default function MethodePage() {
   const corpus = getCorpusVersion();
   const stats = getCorpusStats();
+  const organs = getOrgans();
   const threshold = String(SIGNIFICANCE_THRESHOLD).replace(".", ",");
 
   const rules: Record<SignalLevel, ReactNode> = {
@@ -282,7 +285,7 @@ export default function MethodePage() {
 
           <Block
             id="corpus"
-            eyebrow="2 · Périmètre"
+            eyebrow="2 · Corpus"
             title="Corpus A et corpus B"
           >
             <p>
@@ -300,11 +303,82 @@ export default function MethodePage() {
               (entité « HLA-eplet ») restent des mentions textuelles de
               l&apos;univers A, pas le corpus B.
             </p>
+            <p>
+              Le corpus A <strong>réel</strong> (étude antérieure) porte sur la
+              greffe <strong>rénale</strong>. Le site est conçu pour tous les
+              organes : voir la section suivante.
+            </p>
+          </Block>
+
+          <Block
+            id="organes"
+            eyebrow="3 · Périmètre"
+            title="Organes et strates"
+            after={
+              <ul className="flex flex-wrap gap-2" aria-label="Organes du corpus">
+                {organs.map((o) => (
+                  <li key={o.key}>
+                    <OrganChip organ={o.key} full count={o.nArticles} />
+                  </li>
+                ))}
+              </ul>
+            }
+          >
+            <p>
+              Le corpus couvre sept organes : rein, foie, cœur, poumon,
+              cellules souches hématopoïétiques (GCSH, greffe allogénique),
+              pancréas (dont pancréas-rein) et intestin. Un article concerne un
+              ou <strong>plusieurs organes</strong> (pancréas-rein, cœur-poumon
+              : il compte alors dans chacun).
+            </p>
+            <p>
+              Les statistiques sont <strong>stratifiées</strong>. Pour « tous
+              les organes » puis pour chaque organe, la table 2 × 2, le NPMI,
+              l&apos;odds ratio, les tests de Fisher, la correction FDR et le
+              niveau de signal sont <strong>recalculés sur les seuls articles
+              de la strate</strong>, avec <strong>le dénominateur de la strate</strong>{" "}
+              (N = articles de l&apos;organe) et sa propre famille de tests.
+              Aucune strate ne réutilise les nombres d&apos;une autre — c&apos;est
+              la même règle que la séparation des corpus A et B, appliquée
+              aux organes.
+            </p>
+            <p>
+              Conséquences à garder en tête : la strate « tous les organes »
+              n&apos;est <strong>pas la somme</strong> des organes ; un signal
+              net dans un organe peut disparaître dans l&apos;ensemble (dilué)
+              ou y apparaître sans exister dans aucun organe pris seul ; et
+              deux organes de tailles très différentes ne se comparent pas
+              chiffre à chiffre — l&apos;intestin n&apos;a que quelques
+              centaines d&apos;articles, donc très peu de co-occurrences
+              distinguables du hasard.
+            </p>
+            <p>
+              Les complications ont aussi un <strong>champ d&apos;organes</strong>{" "}
+              : certaines sont partagées (rejet, anticorps anti-donneur,
+              infection à CMV, syndrome lymphoprolifératif, mortalité), d&apos;autres
+              propres à un organe (vasculopathie du greffon cardiaque,
+              dysfonction chronique du greffon pulmonaire, réaction du greffon
+              contre l&apos;hôte en GCSH…). Choisir un organe ne liste que les
+              complications qui s&apos;y appliquent ; un interrupteur permet de
+              toutes les voir.
+            </p>
+            <p>
+              L&apos;organe se choisit dans l&apos;en-tête et se lit dans l&apos;URL
+              (<span className="font-mono text-[0.85em]">?organe=coeur</span>) :
+              une vue est partageable telle quelle. La carte v1 est propre au
+              rein et ignore ce choix.
+            </p>
+            <p className="rounded-lg border-l-[3px] border-warn bg-warn-soft px-4 py-2.5 font-medium text-warn-soft-fg">
+              La qualité de l&apos;extraction (précision, kappa) n&apos;a été
+              mesurée que sur le corpus rein. Les autres organes sont, pour
+              l&apos;instant, des données synthétiques de remplissage : leur
+              qualité d&apos;extraction n&apos;est pas connue.
+            </p>
           </Block>
 
           <Block
             id="co-occurrence"
-            eyebrow="3 · L'objet mesuré"
+            eyebrow="4 · L'objet mesuré"
             title="Qu'est-ce qu'une co-occurrence ?"
           >
             <p>
@@ -374,7 +448,7 @@ export default function MethodePage() {
 
           <Block
             id="mesures"
-            eyebrow="4 · Définitions"
+            eyebrow="5 · Définitions"
             title="Les mesures derrière le signal"
           >
             <p>
@@ -445,7 +519,7 @@ IC95% = exp( ln OR ± 1,96 · √(1/(a+½) + 1/(b+½) + 1/(c+½) + 1/(d+½)) )`}
 
           <Block
             id="signal"
-            eyebrow="5 · Ce que le site affiche"
+            eyebrow="6 · Ce que le site affiche"
             title="Les niveaux de signal"
             after={
               <>
@@ -505,7 +579,7 @@ IC95% = exp( ln OR ± 1,96 · √(1/(a+½) + 1/(b+½) + 1/(c+½) + 1/(d+½)) )`}
             </p>
           </Block>
 
-          <Block id="negations" eyebrow="6 · Polarité" title="Les négations">
+          <Block id="negations" eyebrow="7 · Polarité" title="Les négations">
             <p>
               Une phrase peut mentionner une paire pour la <strong>nier</strong>{" "}
               : « no significant difference in donor-specific antibodies between
@@ -532,7 +606,7 @@ IC95% = exp( ln OR ± 1,96 · √(1/(a+½) + 1/(b+½) + 1/(c+½) + 1/(d+½)) )`}
 
           <Block
             id="qualite"
-            eyebrow="7 · Validation"
+            eyebrow="8 · Validation"
             title="Qualité de l'extraction"
           >
             <div className="grid gap-3 sm:grid-cols-3">
@@ -561,6 +635,9 @@ IC95% = exp( ln OR ± 1,96 · √(1/(a+½) + 1/(b+½) + 1/(c+½) + 1/(d+½)) )`}
                 </p>
               </Card>
             </div>
+            <p className="rounded-lg border-l-[3px] border-warn bg-warn-soft px-4 py-2.5 font-medium text-warn-soft-fg">
+              {EXTRACTION_METRICS.scopeNote}
+            </p>
             <p>
               Ces chiffres viennent d&apos;une{" "}
               <strong>validation manuelle</strong> d&apos;un échantillon de
@@ -576,7 +653,7 @@ IC95% = exp( ln OR ± 1,96 · √(1/(a+½) + 1/(b+½) + 1/(c+½) + 1/(d+½)) )`}
             </p>
           </Block>
 
-          <Block id="limites" eyebrow="8 · Prudence" title="Limites et biais">
+          <Block id="limites" eyebrow="9 · Prudence" title="Limites et biais">
             <ul className="list-disc space-y-2 pl-5 marker:text-fg-faint">
               <li>
                 <strong>Mode de publication.</strong> Un sujet en vogue (éplets,
@@ -592,8 +669,15 @@ IC95% = exp( ln OR ± 1,96 · √(1/(a+½) + 1/(b+½) + 1/(c+½) + 1/(d+½)) )`}
               </li>
               <li>
                 <strong>Erreurs d&apos;extraction.</strong> Environ une mention
-                sur cinq est fausse ; la négation est détectée avec un accord
-                modéré.
+                sur cinq est fausse (mesure faite sur le corpus rein) ; la
+                négation est détectée avec un accord modéré. Pour les autres
+                organes, la qualité n&apos;est pas encore mesurée.
+              </li>
+              <li>
+                <strong>Strates de petit effectif.</strong> Dans un organe peu
+                représenté, quelques articles suffisent à faire un « signal » ;
+                le nombre d&apos;articles affiché à côté du niveau est la
+                première chose à lire.
               </li>
               <li>
                 <strong>Non-indépendance.</strong> Plusieurs articles d&apos;une
@@ -626,7 +710,7 @@ IC95% = exp( ln OR ± 1,96 · √(1/(a+½) + 1/(b+½) + 1/(c+½) + 1/(d+½)) )`}
 
           <Block
             id="reproductibilite"
-            eyebrow="9 · Traçabilité"
+            eyebrow="10 · Traçabilité"
             title="Reproductibilité"
           >
             <p>

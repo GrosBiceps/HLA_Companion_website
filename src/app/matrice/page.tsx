@@ -10,7 +10,19 @@ import {
   LegendItem,
   SignalScale,
 } from "@/components/charts";
-import { getAssociationMatrix, getMatrixLoci } from "@/lib/queries";
+import { OrganStrip } from "@/components/organ/OrganChip";
+import {
+  getAssociationMatrix,
+  getCorpusStats,
+  getMatrixLoci,
+  getOrgans,
+} from "@/lib/queries";
+import {
+  ALL_ORGANS,
+  organFromSearchParams,
+  organLabel,
+  organShortLabel,
+} from "@/lib/organ";
 import { toClientMatrix } from "@/lib/matrix";
 
 /**
@@ -21,6 +33,11 @@ import { toClientMatrix } from "@/lib/matrix";
  * transmise au composant client, qui ne porte que l'interaction (tri,
  * filtre, infobulle). La resolution (2 ou 4 chiffres) est dans l'URL :
  * `?resolution=4-digit`, pour qu'une vue soit partageable.
+ *
+ * ORGANE. `?organe=foie` recalcule la matrice dans la strate : les cases sont
+ * les associations de l'organe (denominateur propre), les lignes les alleles
+ * cites dans cet organe, les colonnes les complications qui s'y appliquent
+ * (plus celles co-mentionnees dans la strate, rien n'est masque).
  */
 export const metadata: Metadata = {
   title: "Matrice — co-occurrences textuelles",
@@ -30,12 +47,19 @@ export const metadata: Metadata = {
 };
 
 type SearchParams = {
-  searchParams: Promise<{ resolution?: string; locus?: string }>;
+  searchParams: Promise<{ resolution?: string; locus?: string; organe?: string }>;
 };
 
 export default async function MatricePage({ searchParams }: SearchParams) {
   const sp = await searchParams;
   const resolution = sp.resolution === "4-digit" ? "4-digit" : "2-digit";
+  const organ = organFromSearchParams(sp);
+  const organs = getOrgans();
+  const stratum = organs.find((o) => o.key === organ);
+  const baseHref =
+    resolution === "4-digit"
+      ? `/matrice?resolution=4-digit${sp.locus ? `&locus=${encodeURIComponent(sp.locus)}` : ""}`
+      : "/matrice";
 
   let matrix;
   try {
@@ -43,10 +67,10 @@ export default async function MatricePage({ searchParams }: SearchParams) {
     // DOM de 20 000 cases figerait le navigateur. Le 2 chiffres reste entier.
     let locus: string | undefined;
     if (resolution === "4-digit") {
-      const loci = getMatrixLoci(resolution).map((l) => l.locus);
+      const loci = getMatrixLoci(resolution, organ).map((l) => l.locus);
       locus = loci.includes(sp.locus ?? "") ? sp.locus : loci[0];
     }
-    matrix = toClientMatrix(getAssociationMatrix(resolution, locus));
+    matrix = toClientMatrix(getAssociationMatrix(resolution, locus, organ));
   } catch (error) {
     console.error("Echec de la lecture de la matrice :", error);
     matrix = null;
@@ -61,9 +85,31 @@ export default async function MatricePage({ searchParams }: SearchParams) {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Vue croisée"
-        title="Matrice allèles × complications"
+        title={
+          organ === ALL_ORGANS
+            ? "Matrice allèles × complications"
+            : `Matrice allèles × complications : ${organShortLabel(organ)}`
+        }
         description="Chaque case croise un allèle et une complication : sa couleur dit le niveau de signal de leur co-mention, sa taille le nombre d'articles qui les citent ensemble. Survolez une case pour la lire, cliquez pour ouvrir la fiche de l'allèle."
       />
+
+      <OrganStrip
+        baseHref={baseHref}
+        selected={organ}
+        counts={Object.fromEntries(organs.map((o) => [o.key, o.nArticles]))}
+        allCount={getCorpusStats().nArticles}
+        stratum={{ nArticles: stratum?.nArticles, nTotal: getCorpusStats().nArticles }}
+        hint="La matrice est recalculée dans la strate de l'organe : lignes, colonnes, couleurs et tailles sont ceux de ses seuls articles."
+      >
+        <span className="text-fg-subtle">
+          Colonnes : complications de {organLabel(organ)} ; lignes : allèles
+          cités dans l&apos;organe.
+          {matrix && (matrix.nCellsOutsideOrgan ?? 0) > 0
+            ? ` ${matrix.nCellsOutsideOrgan} paire${(matrix.nCellsOutsideOrgan ?? 0) > 1 ? "s" : ""} portant sur des complications d'autres organes (articles concernant deux organes) ne sont pas dessinées ; elles figurent sur les fiches.`
+            : ""}
+        </span>
+      </OrganStrip>
+
 
       <Callout tone="framing" title="Comment lire cette matrice" aria-label="Comment lire cette matrice">
         <p>

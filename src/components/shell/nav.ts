@@ -20,6 +20,11 @@ export const NAV_ITEMS: NavItem[] = [
     description: "Présentation du corpus et points d'entrée",
   },
   {
+    href: "/presentation",
+    label: "Présentation",
+    description: "Le corpus en chiffres, les trois gestes et le contexte scientifique",
+  },
+  {
     href: "/graph",
     label: "Explorer le graphe",
     short: "Graphe",

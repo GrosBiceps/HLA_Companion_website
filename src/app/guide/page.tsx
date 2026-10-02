@@ -80,9 +80,14 @@ export default function GuidePage() {
         title="Guide d'utilisation"
         description="Dites ce que vous cherchez : chaque carte ci-dessous vous emmène directement au bon endroit. Le reste de la page explique comment lire ce que vous y trouverez."
         actions={
-          <LinkButton href="/#recherche" variant="primary" size="lg">
-            Lancer une recherche
-          </LinkButton>
+          <div className="flex flex-wrap gap-2">
+            <LinkButton href="/#recherche" variant="primary" size="lg">
+              Lancer une recherche
+            </LinkButton>
+            <LinkButton href="/presentation" variant="secondary" size="lg">
+              Présentation du site
+            </LinkButton>
+          </div>
         }
       />
 
@@ -90,8 +95,14 @@ export default function GuidePage() {
         <p>
           Le site cartographie ce que la littérature{" "}
           <strong>écrit</strong> : des <strong>co-occurrences textuelles</strong>{" "}
-          entre allèles HLA et complications de la greffe rénale. Ce ne sont pas
-          des associations cliniques ni causales.
+          entre allèles HLA et complications de la transplantation d&apos;organes
+          et de cellules souches (rein, foie, cœur, poumon, GCSH, pancréas,
+          intestin). Ce ne sont pas des associations cliniques ni causales.
+        </p>
+        <p>
+          Le sélecteur <strong>Organe</strong> de l&apos;en-tête recalcule toutes
+          les vues sur les articles d&apos;un seul organe ; la mesure de la
+          qualité d&apos;extraction n&apos;existe que pour le rein.
         </p>
       </Callout>
 

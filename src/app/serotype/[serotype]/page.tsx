@@ -22,13 +22,25 @@ import {
   Section,
   StatTile,
 } from "@/components/ui";
+import { OrganBreakdown } from "@/components/organ/OrganBreakdown";
+import { OrganScopeNote } from "@/components/organ/OrganScope";
 import { formatInt, plural } from "@/lib/format";
+import { getCorpusStats, getOrgans } from "@/lib/queries";
+import {
+  ALL_ORGANS,
+  organFromPage,
+  organLabel,
+  organShortLabel,
+  withOrgan,
+  type PageSearchParams,
+} from "@/lib/organ";
 import {
   SEROTYPE_LOCUS_LABELS,
   getSerotype,
   getSerotypeCatalog,
   getSerotypeChildren,
   getSerotypeMembers,
+  getSerotypeOrganCounts,
   getSerotypeOutcomes,
   resolveSerotypeKey,
 } from "@/lib/serotypes";
@@ -52,9 +64,14 @@ import { categoryColor, categoryDisplay } from "@/lib/theme";
  *
  * ENCODAGE. La cle de route est la graphie canonique (« DR15 », « Cw7 ») ;
  * une graphie approchee (« dr15 », « c7 ») redirige vers elle.
+ *
+ * ORGANE. `?organe=gcsh` recalcule les effectifs (alleles, articles,
+ * complications) sur la strate ; la carte « Par organe » ventile les articles
+ * du serotype par organe. Tous les liens reportent la strate.
  */
 
 type Params = { params: Promise<{ serotype: string }> };
+type Props = Params & { searchParams?: PageSearchParams };
 
 function safeDecode(raw: string): string {
   try {
@@ -75,19 +92,23 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   };
 }
 
-export default async function SerotypePage({ params }: Params) {
+export default async function SerotypePage({ params, searchParams }: Props) {
   const raw = safeDecode((await params).serotype);
+  const organ = await organFromPage(searchParams);
   const serotype = getSerotype(raw);
   if (!serotype) {
     const canonical = resolveSerotypeKey(raw);
-    if (canonical) redirect(serotypeHref(canonical));
+    if (canonical) redirect(withOrgan(serotypeHref(canonical), organ));
     notFound();
   }
 
-  const members = getSerotypeMembers(serotype.serotypeId);
-  const outcomes = getSerotypeOutcomes(serotype.serotypeId);
+  const members = getSerotypeMembers(serotype.serotypeId, organ);
+  const outcomes = getSerotypeOutcomes(serotype.serotypeId, organ);
   const narrower = getSerotypeChildren(serotype.serotypeId);
-  const catalog = getSerotypeCatalog();
+  const catalog = getSerotypeCatalog(organ);
+  const baseHref = serotypeHref(serotype.serotypeId);
+  const organCounts = getSerotypeOrganCounts(serotype.serotypeId);
+  const stratum = getOrgans().find((o) => o.key === organ);
   const entry = catalog.find((s) => s.serotypeId === serotype.serotypeId);
   const broad = serotype.broadSerotype
     ? catalog.find((s) => s.serotypeId === serotype.broadSerotype)
@@ -120,7 +141,7 @@ export default async function SerotypePage({ params }: Params) {
           <ol className="flex flex-wrap items-center gap-x-1 gap-y-1">
             <li>
               <Link
-                href="/serotype"
+                href={withOrgan("/serotype", organ)}
                 className="rounded-md px-1 py-0.5 text-fg-muted hover:text-fg"
               >
                 Sérotypes
@@ -129,7 +150,7 @@ export default async function SerotypePage({ params }: Params) {
             <li className="flex items-center gap-1">
               <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 text-fg-faint" />
               <Link
-                href={`/serotype#locus-${serotype.locus}`}
+                href={withOrgan(`/serotype#locus-${serotype.locus}`, organ)}
                 className="rounded-md px-1 py-0.5 text-fg-muted hover:text-fg"
               >
                 {locusLabel}
@@ -139,7 +160,7 @@ export default async function SerotypePage({ params }: Params) {
               <li className="flex items-center gap-1">
                 <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 text-fg-faint" />
                 <Link
-                  href={serotypeHref(broad.serotypeId)}
+                  href={withOrgan(serotypeHref(broad.serotypeId), organ)}
                   className="rounded-md px-1 py-0.5 text-fg-muted hover:text-fg"
                 >
                   {broad.label}
@@ -165,7 +186,7 @@ export default async function SerotypePage({ params }: Params) {
               </Badge>
               <Badge>Locus {locusLabel}</Badge>
               {broad ? (
-                <Link href={serotypeHref(broad.serotypeId)}>
+                <Link href={withOrgan(serotypeHref(broad.serotypeId), organ)}>
                   <Badge tone="outline">Famille {broad.label}</Badge>
                 </Link>
               ) : null}
@@ -174,7 +195,10 @@ export default async function SerotypePage({ params }: Params) {
           actions={
             graphTarget ? (
               <LinkButton
-                href={`/graph?center=${encodeURIComponent(graphTarget.hla)}`}
+                href={withOrgan(
+                  `/graph?center=${encodeURIComponent(graphTarget.hla)}`,
+                  organ,
+                )}
                 variant="secondary"
               >
                 <Network aria-hidden="true" className="h-4 w-4" />
@@ -196,13 +220,20 @@ export default async function SerotypePage({ params }: Params) {
             <strong className="tabular font-semibold text-fg">
               {plural(nArticles, "article")}
             </strong>
-            .
+            {organ === ALL_ORGANS ? "" : ` (${organShortLabel(organ)})`}.
           </p>
           {serotype.note ? (
             <p className="max-w-prose text-sm text-fg-muted">{serotype.note}</p>
           ) : null}
         </PageHeader>
       </div>
+
+      <OrganScopeNote
+        organ={organ}
+        nArticles={stratum?.nArticles}
+        nTotal={getCorpusStats().nArticles}
+        baseHref={baseHref}
+      />
 
       <Callout
         tone="framing"
@@ -251,6 +282,15 @@ export default async function SerotypePage({ params }: Params) {
         />
       </div>
 
+      <div className="max-w-md">
+        <OrganBreakdown
+          counts={organCounts}
+          selected={organ}
+          hrefFor={(o) => withOrgan(baseHref, o)}
+          total={getSerotypeCatalog().find((s) => s.serotypeId === serotype.serotypeId)?.nArticles}
+        />
+      </div>
+
       {narrower.length > 0 ? (
         <Section
           title="Spécificités plus fines"
@@ -262,7 +302,7 @@ export default async function SerotypePage({ params }: Params) {
               return (
                 <li key={n.serotypeId}>
                   <Link
-                    href={serotypeHref(n.serotypeId)}
+                    href={withOrgan(serotypeHref(n.serotypeId), organ)}
                     className="inline-flex items-center gap-2 rounded-lg bg-surface px-3 py-1.5 text-sm shadow-xs ring-1 ring-inset ring-line hover:ring-line-strong"
                   >
                     <span className="font-semibold text-fg">{n.label}</span>
@@ -284,7 +324,7 @@ export default async function SerotypePage({ params }: Params) {
         aria-label="Allèles du sérotype"
       >
         {members.length > 0 ? (
-          <SerotypeMembers members={members} />
+          <SerotypeMembers members={members} organ={organ} />
         ) : (
           <EmptyState
             title="Aucun allèle du corpus"
@@ -307,7 +347,11 @@ export default async function SerotypePage({ params }: Params) {
         {outcomes.length === 0 ? (
           <EmptyState
             title="Aucune complication co-mentionnée"
-            description="Aucune complication n'est co-mentionnée avec ces allèles dans ce corpus. Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée telle qu'elle a été extraite."
+            description={
+              organ === ALL_ORGANS
+                ? "Aucune complication n'est co-mentionnée avec ces allèles dans ce corpus. Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée telle qu'elle a été extraite."
+                : `Aucune complication n'est co-mentionnée avec ces allèles dans la strate « ${organLabel(organ)} ». Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée pour cet organe.`
+            }
           />
         ) : (
           <Card>
@@ -324,7 +368,7 @@ export default async function SerotypePage({ params }: Params) {
                 >
                   <div className="min-w-0">
                     <Link
-                      href={`/complication/${encodeURIComponent(o.outcome)}`}
+                      href={withOrgan(`/complication/${encodeURIComponent(o.outcome)}`, organ)}
                       className="flex items-center gap-1.5 text-sm font-medium text-fg hover:text-primary hover:underline"
                     >
                       <span
@@ -379,7 +423,7 @@ export default async function SerotypePage({ params }: Params) {
           <ul className="flex flex-wrap gap-2">
             {siblings.map((s) => (
               <li key={s.serotypeId}>
-                <SerotypeBadge serotypeId={s.serotypeId} kind={s.kind} />
+                <SerotypeBadge serotypeId={s.serotypeId} kind={s.kind} organ={organ} />
               </li>
             ))}
           </ul>
@@ -394,19 +438,19 @@ export default async function SerotypePage({ params }: Params) {
           <p className="text-sm text-fg-muted">
             L&apos;index les range par locus et par famille. Les allèles se
             parcourent aussi par{" "}
-            <Link href="/allele" className="link">
+            <Link href={withOrgan("/allele", organ)} className="link">
               nomenclature
             </Link>
             {groups[0] ? (
               <>
                 , par exemple{" "}
-                <AlleleName hla={groups[0].hla} href className="text-sm" />
+                <AlleleName hla={groups[0].hla} href organ={organ} className="text-sm" />
               </>
             ) : null}
             .
           </p>
         </div>
-        <LinkButton href="/serotype" variant="primary">
+        <LinkButton href={withOrgan("/serotype", organ)} variant="primary">
           Index des sérotypes
           <ArrowRight aria-hidden="true" className="h-4 w-4" />
         </LinkButton>

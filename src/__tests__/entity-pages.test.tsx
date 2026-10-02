@@ -9,7 +9,12 @@ import MethodePage from "../app/methode/page";
 import NotFound from "../app/not-found";
 import { getDb } from "../lib/db";
 import { EXTRACTION_METRICS } from "../lib/extraction-metrics";
-import { CLEAR_MIN_N, OUTCOME_LABELS, STRONG_MIN_N } from "../lib/labels";
+import {
+  CATEGORIES,
+  CLEAR_MIN_N,
+  OUTCOME_LABELS,
+  STRONG_MIN_N,
+} from "../lib/labels";
 import {
   getAssociationsForAllele,
   getAssociationsForOutcome,
@@ -172,7 +177,7 @@ describe("index des alleles", () => {
   const link = (hla: string) => `a[href="/allele/${encodeURIComponent(hla)}"]`;
 
   it("liste les classes, loci et groupes avec un filtre", async () => {
-    const { container } = render(AlleleIndexPage());
+    const { container } = render(await AlleleIndexPage());
     expect(container.querySelector("#classe-I")).not.toBeNull();
     expect(container.querySelector("#locus-DQB1")).not.toBeNull();
     expect(container.querySelector("#locus-DRB3")).not.toBeNull();
@@ -182,8 +187,8 @@ describe("index des alleles", () => {
     for (const c of CAUSAL) expect(text).not.toContain(c);
   });
 
-  it("replie les groupes par defaut (liste de ~900 alleles legere) et les deplie a la demande", () => {
-    const { container } = render(AlleleIndexPage());
+  it("replie les groupes par defaut (liste de ~900 alleles legere) et les deplie a la demande", async () => {
+    const { container } = render(await AlleleIndexPage());
     // aucune pastille 4-digit n'est rendue tant qu'un groupe est replie
     expect(container.querySelector(link("HLA-DQB1*02:01"))).toBeNull();
     expect(container.querySelectorAll('a[href^="/allele/"]').length).toBeLessThan(400);
@@ -196,16 +201,16 @@ describe("index des alleles", () => {
     expect(container.querySelector(link("HLA-DQB1*02:01"))).not.toBeNull();
   });
 
-  it("filtre sur un allele : un groupe correspondant montre ses 4-digit", () => {
-    const { container } = render(AlleleIndexPage());
+  it("filtre sur un allele : un groupe correspondant montre ses 4-digit", async () => {
+    const { container } = render(await AlleleIndexPage());
     const input = container.querySelector('input[type="search"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: "dqb1 02" } });
     expect(container.querySelector(link("HLA-DQB1*02:01"))).not.toBeNull();
     expect(container.querySelector(link("HLA-A*02"))).toBeNull();
   });
 
-  it("filtre sur un serotype : « DR15 » montre les alleles DRB1*15 et la bande du serotype", () => {
-    const { container } = render(AlleleIndexPage());
+  it("filtre sur un serotype : « DR15 » montre les alleles DRB1*15 et la bande du serotype", async () => {
+    const { container } = render(await AlleleIndexPage());
     const input = container.querySelector('input[type="search"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: "DR15" } });
     expect(container.querySelector(link("HLA-DRB1*15"))).not.toBeNull();
@@ -217,8 +222,8 @@ describe("index des alleles", () => {
     expect(container.textContent).toContain("Sérotype DR15");
   });
 
-  it("filtre sur un serotype fin (DR17) : seuls ses 4-digit sont montres sous leur groupe", () => {
-    const { container } = render(AlleleIndexPage());
+  it("filtre sur un serotype fin (DR17) : seuls ses 4-digit sont montres sous leur groupe", async () => {
+    const { container } = render(await AlleleIndexPage());
     const input = container.querySelector('input[type="search"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: "dr 17" } });
     expect(container.querySelector(link("HLA-DRB1*03:01"))).not.toBeNull();
@@ -271,13 +276,15 @@ describe("fiche allele : serotypes et navigation de resolution", () => {
 });
 
 describe("index des complications", () => {
-  it("liste les 7 categories et les libelles cliniques, jamais les cles", () => {
-    const { container } = render(ComplicationIndexPage());
+  it("liste toutes les categories et les libelles cliniques, jamais les cles", async () => {
+    const { container } = render(await ComplicationIndexPage());
     const text = container.textContent ?? "";
     for (const { label } of Object.values(OUTCOME_LABELS))
       expect(text).toContain(label);
     expectNoRawKeys(text);
-    expect(container.querySelectorAll('section[id^="cat-"]').length).toBe(7);
+    expect(container.querySelectorAll('section[id^="cat-"]').length).toBe(
+      CATEGORIES.length,
+    );
     expect(
       container.querySelector('a[href="/complication/ABMR"]'),
     ).not.toBeNull();

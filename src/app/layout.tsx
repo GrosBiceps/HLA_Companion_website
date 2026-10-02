@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono, Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 import { getCorpusVersion } from "@/lib/db";
+import { getOrgans } from "@/lib/queries";
 import { SyntheticBanner } from "@/components/SyntheticBanner";
 import { GlobalFramingReminder } from "@/components/GlobalFramingReminder";
 import { SiteHeader } from "@/components/shell/SiteHeader";
@@ -49,7 +50,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "Compagnon bibliométrique HLA",
   description:
-    "Exploration des co-occurrences textuelles entre allèles HLA et complications de la transplantation rénale dans la littérature indexée. Ce ne sont pas des associations cliniques.",
+    "Exploration des co-occurrences textuelles entre allèles HLA et complications de la transplantation d'organes et de cellules souches (rein, foie, cœur, poumon, GCSH, pancréas, intestin) dans la littérature indexée. Ce ne sont pas des associations cliniques.",
 };
 
 /**
@@ -77,6 +78,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   const corpus = getCorpusVersion();
+  const organs = getOrgans();
 
   return (
     <html
@@ -94,7 +96,7 @@ export default function RootLayout({
           {corpus.isSynthetic ? (
             <SyntheticBanner version={corpus.version} />
           ) : null}
-          <SiteHeader />
+          <SiteHeader organs={organs} totalArticles={corpus.nArticles} />
         </div>
         <GlobalFramingReminder />
         <main

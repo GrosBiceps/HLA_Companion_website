@@ -9,7 +9,7 @@ import {
   Sigma,
 } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
-import { NUMBER_FORMAT } from "./constellation";
+import { NUMBER_FORMAT } from "@/components/landing/constellation";
 
 const PIPELINE = [
   {
@@ -20,7 +20,7 @@ const PIPELINE = [
   {
     icon: <Filter />,
     title: "Filtrage",
-    text: "Transplantation rénale, espace allélique (corpus A).",
+    text: "Greffes d'organes et de cellules souches, espace allélique (corpus A). Seul le rein dispose à ce jour d'un corpus réel.",
   },
   {
     icon: <ScanText />,

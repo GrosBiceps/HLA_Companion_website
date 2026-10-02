@@ -98,8 +98,8 @@ describe("fiche serotype", () => {
 });
 
 describe("index des serotypes", () => {
-  it("range les serotypes par locus et relie chaque carte a sa fiche", () => {
-    const { container } = render(SerotypeIndexPage());
+  it("range les serotypes par locus et relie chaque carte a sa fiche", async () => {
+    const { container } = render(await SerotypeIndexPage());
     for (const locus of ["A", "B", "C", "DR", "DQ", "DP"]) {
       expect(container.querySelector(`#locus-${locus}`), locus).not.toBeNull();
     }
@@ -109,8 +109,8 @@ describe("index des serotypes", () => {
     expect(container.querySelector('input[type="search"]')).not.toBeNull();
   });
 
-  it("le filtre comprend un serotype (« dr 15 ») et un allele (« DRB1*15 »)", () => {
-    const { container } = render(SerotypeIndexPage());
+  it("le filtre comprend un serotype (« dr 15 ») et un allele (« DRB1*15 »)", async () => {
+    const { container } = render(await SerotypeIndexPage());
     const input = container.querySelector('input[type="search"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: "dr 15" } });
     expect(container.querySelector('a[href="/serotype/DR15"]')).not.toBeNull();
@@ -122,8 +122,8 @@ describe("index des serotypes", () => {
     expect(container.textContent).toContain("Aucun sérotype ne correspond");
   });
 
-  it("n'expose aucun terme causal", () => {
-    const { container } = render(SerotypeIndexPage());
+  it("n'expose aucun terme causal", async () => {
+    const { container } = render(await SerotypeIndexPage());
     const text = (container.textContent ?? "").toLowerCase();
     for (const c of CAUSAL) expect(text).not.toContain(c);
   });

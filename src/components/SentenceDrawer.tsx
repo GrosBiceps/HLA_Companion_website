@@ -7,6 +7,13 @@ import { HighlightedSentence } from "@/components/HighlightedSentence";
 import { SegmentedControl, type SegmentOption } from "@/components/ui/SegmentedControl";
 import { Skeleton, SkeletonText } from "@/components/ui/Feedback";
 import { cn } from "@/lib/cn";
+import {
+  ALL_ORGANS,
+  ORGAN_PARAM,
+  organSlug,
+  withOrgan,
+  type OrganSelection,
+} from "@/lib/organ";
 import type { PairMention } from "@/lib/types";
 
 /**
@@ -52,8 +59,8 @@ function pubmedHref(pmid: string): string {
  * fait deja `SearchBar.hrefFor`. Un lien vers une route planifiee n'est pas un
  * lien mort : c'est le meme href qui fonctionnera sans retouche.
  */
-function articleHref(pmid: string): string {
-  return `/article/${encodeURIComponent(pmid)}`;
+function articleHref(pmid: string, organ: OrganSelection): string {
+  return withOrgan(`/article/${encodeURIComponent(pmid)}`, organ);
 }
 
 /** Badge de polarite — deux styles nettement distincts, pas deux nuances. */
@@ -73,7 +80,13 @@ function PolarityBadge({ polarity }: { polarity: PairMention["polarity"] }) {
   );
 }
 
-function MentionCard({ mention }: { mention: PairMention }) {
+function MentionCard({
+  mention,
+  organ,
+}: {
+  mention: PairMention;
+  organ: OrganSelection;
+}) {
   const negated = mention.polarity === "negated";
   return (
     <li
@@ -140,7 +153,7 @@ function MentionCard({ mention }: { mention: PairMention }) {
               PubMed
               <ExternalLink aria-hidden="true" className="h-3 w-3" />
             </a>
-            <Link href={articleHref(mention.pmid)} className="link">
+            <Link href={articleHref(mention.pmid, organ)} className="link">
               Fiche article
             </Link>
           </span>
@@ -155,7 +168,10 @@ export function SentenceDrawer({
   outcome,
   label,
   onClose,
+  organ = ALL_ORGANS,
 }: {
+  /** Strate : seules les phrases des articles de l'organe sont chargees. */
+  organ?: OrganSelection;
   hla: string;
   /** Cle technique : sert a interroger l'API, n'est JAMAIS affichee. */
   outcome: string;
@@ -176,6 +192,8 @@ export function SentenceDrawer({
   useEffect(() => {
     let cancelled = false;
     const params = new URLSearchParams({ hla, outcome });
+    const slug = organSlug(organ);
+    if (slug) params.set(ORGAN_PARAM, slug);
 
     fetch(`/api/mentions?${params.toString()}`)
       .then((res) => {
@@ -193,7 +211,7 @@ export function SentenceDrawer({
     return () => {
       cancelled = true;
     };
-  }, [hla, outcome]);
+  }, [hla, outcome, organ]);
 
   /** Echap ferme le tiroir : un panneau modal doit se quitter au clavier. */
   useEffect(() => {
@@ -325,7 +343,11 @@ export function SentenceDrawer({
           ) : (
             <ul className="space-y-3">
               {visible.map((mention) => (
-                <MentionCard key={mention.pairMentionId} mention={mention} />
+                <MentionCard
+                  key={mention.pairMentionId}
+                  mention={mention}
+                  organ={organ}
+                />
               ))}
             </ul>
           )}

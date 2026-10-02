@@ -88,8 +88,24 @@ REGIMES DE TAILLE (seuils `SMALL_CORPUS` et `RARE_PAIRS_MIN_ARTICLES`)
 Ces nombres restent FICTIFS et ne sont pas comparables aux sorties du vrai
 pipeline : ils sont seulement internement coherents.
 
+ORGANES ET STRATES (cf. docs/ORGANES.md)
+----------------------------------------
+Le corpus est MULTI-ORGANE : chaque article concerne un organe principal (rein
+pour ~40 %, puis foie, GCSH, coeur, poumon, pancreas, intestin) et, pour ~8 %
+d'entre eux, un second (pancreas-rein, coeur-poumon...). Les complications
+sont celles de l'organe (`labels.OUTCOME_ORGANS`) ; les popularites d'alleles
+et de complications varient avec l'organe (l'HLA pese lourd en GCSH, moins en
+greffe hepatique).
+
+Les statistiques sont STRATIFIEES : `associations.csv` porte une ligne par
+(strate, allele, complication), la strate etant `all` (tous les organes) ou un
+organe. Chaque strate recalcule SA table 2x2 avec SON denominateur
+(n_universe = articles de la strate) et SA famille FDR : aucune strate ne
+melange les denominateurs d'une autre. Un article multi-organe compte dans
+chacune de ses strates d'organe.
+
 Usage :
-    python scripts/gen_synthetic.py --out data/synthetic --n-articles 4000 --seed 42
+    python scripts/gen_synthetic.py --out data/synthetic --n-articles 7000 --seed 42
 """
 
 import argparse
@@ -104,7 +120,14 @@ from random import Random
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from labels import OUTCOME_LABELS
+from labels import (
+    ALL_ORGANS,
+    OUTCOME_LABELS,
+    OUTCOME_ORGANS,
+    ORGAN_KEYS,
+    ORGANS,
+    outcomes_for_organ,
+)
 
 # =====================================================================
 # CONSTANTES DE DOMAINE
@@ -113,7 +136,7 @@ from labels import OUTCOME_LABELS
 YEAR_MIN = 1990
 YEAR_MAX = 2026
 
-DEFAULT_N_ARTICLES = 4000
+DEFAULT_N_ARTICLES = 7000
 
 # Sous ce seuil, regime « petit corpus » (cf. docstring du module).
 SMALL_CORPUS = 300
@@ -123,34 +146,47 @@ SMALL_CORPUS = 300
 YEAR_GROWTH = 0.07
 CURRENT_YEAR_FRACTION = 0.6
 
-# (titre, abreviation, poids, premiere annee de parution dans le corpus)
+# (titre, abreviation, poids, premiere annee de parution dans le corpus,
+#  organes de la revue ; `()` = generaliste)
+_K = ("kidney",)
 JOURNALS = [
-    ("American Journal of Transplantation", "Am J Transplant", 10, 2001),
-    ("Transplantation", "Transplantation", 10, 1990),
-    ("Nephrology Dialysis Transplantation", "Nephrol Dial Transplant", 6, 1990),
-    ("HLA", "HLA", 6, 2016),
-    ("Tissue Antigens", "Tissue Antigens", 6, 1990),
-    ("Human Immunology", "Hum Immunol", 7, 1990),
-    ("Kidney International", "Kidney Int", 5, 1990),
-    ("Journal of the American Society of Nephrology", "J Am Soc Nephrol", 5, 1990),
-    ("Clinical Transplantation", "Clin Transplant", 5, 1990),
-    ("Transplant International", "Transpl Int", 5, 1990),
-    ("Transplant Immunology", "Transpl Immunol", 4, 1993),
-    ("Transplantation Proceedings", "Transplant Proc", 6, 1990),
-    ("Frontiers in Immunology", "Front Immunol", 4, 2010),
-    ("Clinical Journal of the American Society of Nephrology", "Clin J Am Soc Nephrol", 3, 2006),
-    ("Kidney International Reports", "Kidney Int Rep", 2, 2016),
-    ("Pediatric Transplantation", "Pediatr Transplant", 2, 1997),
-    ("Transplantation Direct", "Transplant Direct", 2, 2015),
-    ("International Journal of Immunogenetics", "Int J Immunogenet", 3, 2005),
-    ("BMC Nephrology", "BMC Nephrol", 2, 2000),
-    ("PLoS One", "PLoS One", 3, 2006),
-    ("Scientific Reports", "Sci Rep", 2, 2011),
-    ("Journal of Clinical Medicine", "J Clin Med", 2, 2012),
-    ("American Journal of Kidney Diseases", "Am J Kidney Dis", 3, 1990),
-    ("Transplant Infectious Disease", "Transpl Infect Dis", 2, 1999),
-    ("Immunogenetics", "Immunogenetics", 2, 1990),
+    ("American Journal of Transplantation", "Am J Transplant", 10, 2001, ()),
+    ("Transplantation", "Transplantation", 10, 1990, ()),
+    ("Nephrology Dialysis Transplantation", "Nephrol Dial Transplant", 6, 1990, _K),
+    ("HLA", "HLA", 6, 2016, ()),
+    ("Tissue Antigens", "Tissue Antigens", 6, 1990, ()),
+    ("Human Immunology", "Hum Immunol", 7, 1990, ()),
+    ("Kidney International", "Kidney Int", 5, 1990, _K),
+    ("Journal of the American Society of Nephrology", "J Am Soc Nephrol", 5, 1990, _K),
+    ("Clinical Transplantation", "Clin Transplant", 5, 1990, ()),
+    ("Transplant International", "Transpl Int", 5, 1990, ()),
+    ("Transplant Immunology", "Transpl Immunol", 4, 1993, ()),
+    ("Transplantation Proceedings", "Transplant Proc", 6, 1990, ()),
+    ("Frontiers in Immunology", "Front Immunol", 4, 2010, ()),
+    ("Clinical Journal of the American Society of Nephrology", "Clin J Am Soc Nephrol", 3, 2006, _K),
+    ("Kidney International Reports", "Kidney Int Rep", 2, 2016, _K),
+    ("Pediatric Transplantation", "Pediatr Transplant", 2, 1997, ()),
+    ("Transplantation Direct", "Transplant Direct", 2, 2015, ()),
+    ("International Journal of Immunogenetics", "Int J Immunogenet", 3, 2005, ()),
+    ("BMC Nephrology", "BMC Nephrol", 2, 2000, _K),
+    ("PLoS One", "PLoS One", 3, 2006, ()),
+    ("Scientific Reports", "Sci Rep", 2, 2011, ()),
+    ("Journal of Clinical Medicine", "J Clin Med", 2, 2012, ()),
+    ("American Journal of Kidney Diseases", "Am J Kidney Dis", 3, 1990, _K),
+    ("Transplant Infectious Disease", "Transpl Infect Dis", 2, 1999, ()),
+    ("Immunogenetics", "Immunogenetics", 2, 1990, ()),
+    ("Journal of Heart and Lung Transplantation", "J Heart Lung Transplant", 7, 1990, ("heart", "lung")),
+    ("Liver Transplantation", "Liver Transpl", 7, 1996, ("liver",)),
+    ("Journal of Hepatology", "J Hepatol", 2, 1990, ("liver",)),
+    ("Bone Marrow Transplantation", "Bone Marrow Transplant", 7, 1990, ("hsct",)),
+    ("Biology of Blood and Marrow Transplantation", "Biol Blood Marrow Transplant", 6, 1995, ("hsct",)),
+    ("Blood", "Blood", 3, 1990, ("hsct",)),
+    ("Haematologica", "Haematologica", 2, 1990, ("hsct",)),
+    ("Cell Transplantation", "Cell Transplant", 2, 1992, ("pancreas",)),
 ]
+# Une revue specialisee est privilegiee pour son organe et rare ailleurs.
+JOURNAL_ORGAN_MATCH = 4.0
+JOURNAL_ORGAN_OTHER = 0.15
 
 # (pays, poids, premiere annee d'activite des equipes, patronymes courants)
 # Patronymes volontairement communs : ils ne designent personne.
@@ -223,45 +259,116 @@ COUNTRY_PROFILES = [
 GIVEN_INITIALS = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M",
                   "N", "P", "R", "S", "T", "V", "Y"]
 
+# Les titres et resumes sont en anglais (comme la litterature indexee) et
+# parametres par l'ORGANE : {tx} = « kidney transplantation », {recip} =
+# « kidney transplant recipients », {graft} = « renal allograft ».
 TITLE_OPENERS = [
-    "Impact of {hla} on {outcome} after kidney transplantation",
-    "{hla} and the risk of {outcome} in renal transplant recipients",
+    "Impact of {hla} on {outcome} after {tx}",
+    "{hla} and the risk of {outcome} in {recip}",
     "Association between {hla} mismatch and {outcome}: a cohort study",
-    "{outcome} in kidney transplantation: the role of {hla}",
-    "Long-term outcomes of {hla}-mismatched kidney transplantation: focus on {outcome}",
-    "Revisiting {hla} as a predictor of {outcome} in renal allograft recipients",
-    "Eplet-level {hla} matching and {outcome} after renal transplantation",
-    "A single-center analysis of {hla} and {outcome} in kidney transplant recipients",
+    "{outcome} in {tx}: the role of {hla}",
+    "Long-term outcomes of {hla}-mismatched {tx}: focus on {outcome}",
+    "Revisiting {hla} as a predictor of {outcome} in {graft} recipients",
+    "Eplet-level {hla} matching and {outcome} after {tx}",
+    "A single-center analysis of {hla} and {outcome} in {recip}",
     "{hla} typing and {outcome}: a registry-based analysis",
-    "Donor {hla} and recipient {outcome} after deceased-donor kidney transplantation",
-    "Is {hla} a marker of {outcome} in kidney transplantation? A multicenter study",
-    "{outcome} and {hla} in pediatric kidney transplant recipients",
+    "Donor {hla} and recipient {outcome} after {tx}",
+    "Is {hla} a marker of {outcome} in {tx}? A multicenter study",
+    "{outcome} and {hla} in pediatric {recip}",
     "High-resolution {hla} typing refines the assessment of {outcome}",
-    "{hla} in living-donor kidney transplantation: incidence of {outcome}",
+    "{hla} in {tx}: incidence of {outcome}",
     "Ten-year follow-up of {outcome} according to {hla} status",
     "{hla} and {outcome}: a systematic review and meta-analysis",
 ]
 
+# Vocabulaire anglais par organe, pour les titres et resumes.
+ORGAN_TEXT = {
+    "kidney": {
+        "noun": "kidney", "graft": "renal allograft",
+        "recip": "kidney transplant recipients",
+        "background": [
+            "The contribution of HLA compatibility to long-term renal allograft outcome remains debated.",
+            "Donor-specific alloimmunity is a leading cause of late kidney allograft failure.",
+            "Recurrence of the native kidney disease is an under-recognized cause of graft loss.",
+        ],
+        "grading": "Protocol and for-cause biopsies were graded according to the Banff classification.",
+    },
+    "liver": {
+        "noun": "liver", "graft": "liver allograft",
+        "recip": "liver transplant recipients",
+        "background": [
+            "The liver is considered immunologically privileged, yet HLA disparity may still shape long-term allograft outcome.",
+            "Recurrence of the original liver disease remains a major determinant of late graft failure.",
+            "Chronic rejection and biliary complications limit long-term liver allograft survival.",
+        ],
+        "grading": "Liver biopsies were graded according to the Banff schema for liver allograft pathology.",
+    },
+    "heart": {
+        "noun": "heart", "graft": "cardiac allograft",
+        "recip": "heart transplant recipients",
+        "background": [
+            "Cardiac allograft vasculopathy remains the main limit to long-term survival after heart transplantation.",
+            "Donor-specific antibodies are increasingly recognized in cardiac allograft rejection.",
+            "Primary graft dysfunction is a leading cause of early mortality after heart transplantation.",
+        ],
+        "grading": "Endomyocardial biopsies were graded according to the ISHLT classification.",
+    },
+    "lung": {
+        "noun": "lung", "graft": "lung allograft",
+        "recip": "lung transplant recipients",
+        "background": [
+            "Chronic lung allograft dysfunction is the principal cause of late death after lung transplantation.",
+            "Primary graft dysfunction affects a substantial share of lung transplant recipients.",
+            "HLA mismatching at class II loci has been examined as a determinant of lung allograft outcome.",
+        ],
+        "grading": "Transbronchial biopsies were graded according to the ISHLT A and B grades.",
+    },
+    "hsct": {
+        "noun": "allogeneic hematopoietic stem cell", "graft": "allogeneic HSCT",
+        "recip": "allogeneic HSCT recipients",
+        "background": [
+            "HLA matching between donor and recipient is a central determinant of outcome after allogeneic stem cell transplantation.",
+            "Graft-versus-host disease remains a major cause of morbidity after hematopoietic stem cell transplantation.",
+            "Haploidentical and mismatched unrelated donors extend access to transplantation but raise questions of HLA permissiveness.",
+        ],
+        "grading": "Graft-versus-host disease was graded according to the consensus criteria.",
+    },
+    "pancreas": {
+        "noun": "pancreas", "graft": "pancreas allograft",
+        "recip": "pancreas transplant recipients",
+        "background": [
+            "Simultaneous pancreas-kidney transplantation restores insulin independence in selected recipients with type 1 diabetes.",
+            "Graft thrombosis and rejection are the main causes of early pancreas allograft loss.",
+        ],
+        "grading": "Pancreas allograft biopsies were graded according to the Banff schema.",
+    },
+    "intestine": {
+        "noun": "intestinal", "graft": "intestinal allograft",
+        "recip": "intestinal transplant recipients",
+        "background": [
+            "Intestinal transplantation carries one of the highest rejection rates among solid organs.",
+            "Dependence on parenteral nutrition is the main indication for intestinal transplantation.",
+        ],
+        "grading": "Ileal biopsies were graded according to the consensus intestinal rejection grading.",
+    },
+}
+
 ABSTRACT_BACKGROUND = [
-    "The contribution of HLA compatibility to long-term renal allograft outcome remains debated.",
-    "Donor-specific alloimmunity is a leading cause of late kidney allograft failure.",
     "Molecular-level HLA matching has been proposed to refine immunological risk stratification.",
     "Risk stratification at transplantation still relies largely on antigen-level HLA matching.",
-    "Infectious and malignant complications remain frequent after kidney transplantation.",
+    "Infectious and malignant complications remain frequent after transplantation.",
     "The relationship between recipient HLA genotype and post-transplant complications is poorly characterized.",
     "Solid-phase antibody assays have transformed the monitoring of transplant recipients.",
-    "Recurrence of the native kidney disease is an under-recognized cause of graft loss.",
 ]
 
 ABSTRACT_METHODS = [
-    "We retrospectively analyzed a single-center cohort of consecutive kidney transplant recipients.",
+    "We retrospectively analyzed a single-center cohort of consecutive {recip}.",
     "Recipients transplanted over a ten-year period were included and followed prospectively.",
     "High-resolution HLA typing was imputed from antigen-level data for donor-recipient pairs.",
     "Multivariable Cox regression was used to adjust for recipient age, sex and induction therapy.",
     "Data were extracted from a national transplant registry.",
     "Single-antigen bead assays were performed at transplantation and yearly thereafter.",
     "Eplet mismatches were computed with HLAMatchmaker.",
-    "Protocol and for-cause biopsies were graded according to the Banff classification.",
 ]
 
 ABSTRACT_RESULTS = [
@@ -309,6 +416,39 @@ OUTCOME_SPANS = {
     "recurrent_GN": ["recurrent glomerulonephritis", "GN recurrence"],
     "FSGS": ["recurrent FSGS", "FSGS recurrence", "focal segmental glomerulosclerosis"],
     "IgA_nephropathy": ["IgA nephropathy", "recurrent IgA nephropathy"],
+    "EBV": ["EBV infection", "EBV viremia", "primary EBV infection"],
+    "patient_mortality": ["mortality", "patient death", "all-cause mortality"],
+    "cardiac_allograft_vasculopathy": [
+        "cardiac allograft vasculopathy", "CAV", "allograft vasculopathy"],
+    "chronic_lung_allograft_dysfunction": [
+        "chronic lung allograft dysfunction", "CLAD"],
+    "bronchiolitis_obliterans": [
+        "bronchiolitis obliterans syndrome", "BOS", "obliterative bronchiolitis"],
+    "invasive_aspergillosis": ["invasive aspergillosis", "invasive fungal infection"],
+    "primary_graft_dysfunction": ["primary graft dysfunction", "PGD"],
+    "liver_chronic_rejection": [
+        "chronic ductopenic rejection", "ductopenic rejection"],
+    "early_allograft_dysfunction": ["early allograft dysfunction", "EAD"],
+    "biliary_complications": ["biliary complications", "anastomotic biliary stricture"],
+    "hepatitis_recurrence": [
+        "HCV recurrence", "HBV recurrence", "recurrent viral hepatitis"],
+    "hcc_recurrence": ["HCC recurrence", "recurrent hepatocellular carcinoma"],
+    "cholangitis_recurrence": [
+        "recurrent primary sclerosing cholangitis", "recurrent primary biliary cholangitis"],
+    "pancreas_graft_thrombosis": ["graft thrombosis", "pancreas graft thrombosis"],
+    "insulin_independence": ["insulin independence", "sustained insulin independence"],
+    "autoimmune_diabetes_recurrence": [
+        "recurrent type 1 diabetes", "autoimmune recurrence"],
+    "parenteral_nutrition_dependence": [
+        "parenteral nutrition dependence", "return to parenteral nutrition"],
+    "acute_gvhd": ["acute GVHD", "grade II-IV acute GVHD", "acute graft-versus-host disease"],
+    "chronic_gvhd": ["chronic GVHD", "chronic graft-versus-host disease"],
+    "disease_relapse": ["relapse", "disease relapse", "hematologic relapse"],
+    "engraftment_failure": ["engraftment failure", "primary graft failure"],
+    "hsct_graft_rejection": ["graft rejection", "immune-mediated graft rejection"],
+    "HLA_loss_relapse": ["HLA loss", "genomic HLA loss at relapse"],
+    "secondary_malignancy": ["secondary malignancy", "second malignancy"],
+    "non_relapse_mortality": ["non-relapse mortality", "transplant-related mortality"],
 }
 
 POSITIVE_TEMPLATES = [
@@ -479,7 +619,9 @@ def _hla_popularity():
     return pop
 
 
-# Popularite des complications : DSA, ABMR et rejet dominent la litterature.
+# Popularite de base des complications : DSA, ABMR et rejet dominent la
+# litterature. Les complications propres a un organe ont une popularite
+# propre (elles ne sont tirees que dans les articles de cet organe).
 OUTCOME_POPULARITY = {
     "DSA": 1.00, "ABMR": 0.90, "acute_rejection": 0.85, "graft_loss": 0.80,
     "graft_survival": 0.70, "sensitization": 0.60, "HLA_mismatch_outcome": 0.60,
@@ -487,7 +629,96 @@ OUTCOME_POPULARITY = {
     "eGFR": 0.40, "BK_nephropathy": 0.35, "complement_activation": 0.35,
     "mixed_rejection": 0.15, "PTLD": 0.13, "skin_cancer": 0.18, "NODAT": 0.13,
     "recurrent_GN": 0.18, "IgA_nephropathy": 0.14, "FSGS": 0.10,
+    # Plusieurs organes
+    "EBV": 0.25, "patient_mortality": 0.40,
+    # Coeur, poumon
+    "cardiac_allograft_vasculopathy": 0.80,
+    "chronic_lung_allograft_dysfunction": 0.80, "bronchiolitis_obliterans": 0.55,
+    "invasive_aspergillosis": 0.25, "primary_graft_dysfunction": 0.55,
+    # Foie
+    "liver_chronic_rejection": 0.30, "early_allograft_dysfunction": 0.40,
+    "biliary_complications": 0.50, "hepatitis_recurrence": 0.60,
+    "hcc_recurrence": 0.50, "cholangitis_recurrence": 0.25,
+    # Pancreas, intestin
+    "pancreas_graft_thrombosis": 0.55, "insulin_independence": 0.40,
+    "autoimmune_diabetes_recurrence": 0.20,
+    "parenteral_nutrition_dependence": 0.50,
+    # GCSH
+    "acute_gvhd": 0.95, "chronic_gvhd": 0.85, "disease_relapse": 0.80,
+    "engraftment_failure": 0.40, "hsct_graft_rejection": 0.25,
+    "HLA_loss_relapse": 0.30, "secondary_malignancy": 0.15,
+    "non_relapse_mortality": 0.45,
 }
+
+# Part relative de chaque organe dans le corpus (articles ou il est l'organe
+# PRINCIPAL). Le rein domine la litterature HLA ; les GCSH pesent lourd parce
+# que l'HLA y est central ; l'intestin reste une niche.
+ORGAN_WEIGHTS = {
+    "kidney": 36, "liver": 15, "hsct": 16, "heart": 12, "lung": 10,
+    "pancreas": 7, "intestine": 4,
+}
+# Part d'articles multi-organe (second organe) et organes seconds plausibles.
+MULTI_ORGAN_RATE = 0.08
+SECOND_ORGANS = {
+    "kidney": [("pancreas", 6), ("liver", 2), ("heart", 1)],
+    "liver": [("kidney", 4), ("intestine", 1), ("heart", 1)],
+    "heart": [("lung", 6), ("kidney", 2)],
+    "lung": [("heart", 6)],
+    "pancreas": [("kidney", 8)],
+    "intestine": [("liver", 5)],
+    "hsct": [],
+}
+# Un laboratoire a un organe de predilection : il y publie ~75 % de ses
+# articles (la fiche auteur montre ainsi un melange d'organes lisible).
+HEAD_ORGAN_FIDELITY = 0.75
+
+# Multiplicateurs de popularite des COMPLICATIONS selon l'organe (defaut 1.0).
+ORGAN_OUTCOME_MULT = {
+    "kidney": {},
+    "liver": {"ABMR": 0.3, "TCMR": 0.8, "acute_rejection": 1.1, "DSA": 0.5,
+              "HLA_mismatch_outcome": 0.5, "CMV": 0.8},
+    "heart": {"mixed_rejection": 1.5},
+    "lung": {"acute_rejection": 0.8},
+    "hsct": {"DSA": 0.5, "HLA_mismatch_outcome": 1.8, "CMV": 1.1, "PTLD": 0.6},
+    "pancreas": {"ABMR": 0.6},
+    "intestine": {"acute_rejection": 1.2, "ABMR": 0.5},
+}
+
+# Multiplicateurs de popularite des ALLELES selon l'organe : (locus -> facteur).
+ORGAN_LOCUS_MULT = {
+    "kidney": {},
+    "heart": {"DRB1": 1.25, "DQB1": 1.3, "DQA1": 1.2},
+    "lung": {"DRB1": 1.2, "DQB1": 1.3, "DQA1": 1.2},
+    "liver": {"A": 0.9, "B": 0.9, "C": 0.8, "DPB1": 0.7},
+    "hsct": {"A": 1.1, "B": 1.1, "C": 1.35, "DRB1": 1.2, "DQB1": 1.1,
+             "DPB1": 1.9, "DRB3": 0.6, "DRB4": 0.6, "DRB5": 0.6, "DQA1": 0.6},
+    "pancreas": {"DQB1": 1.3, "DRB1": 1.2},
+    "intestine": {},
+}
+# Entites non alleliques : HLA-mismatch / HLA-eplet.
+ORGAN_SPECIAL_MULT = {
+    "hsct": {"HLA-mismatch": 1.8, "HLA-eplet": 0.35},
+    "liver": {"HLA-mismatch": 0.5, "HLA-eplet": 0.2},
+    "heart": {"HLA-eplet": 1.3},
+    "lung": {"HLA-eplet": 1.3},
+    "pancreas": {"HLA-mismatch": 2.0, "HLA-eplet": 1.5},
+    "intestine": {"HLA-mismatch": 3.0, "HLA-eplet": 2.5},
+}
+# Les alleles dont les paires sont planifiees pour un organe sont aussi ceux
+# que la litterature de cet organe etudie : ils y sont plus souvent cites.
+# (L'allele vitrine est exempt.) Sans cela, les petits organes (intestin :
+# ~200 articles) n'auraient aucun allele assez frequent pour porter un signal.
+ORGAN_FOCUS_STRONG = 3.0
+ORGAN_FOCUS_CLEAR = 1.8
+# Co-citation conditionnelle plus forte dans les petites strates, ou
+# l'effectif d'un allele est faible : le signal planifie reste detectable.
+ORGAN_BOOST_SCALE = {
+    "kidney": 1.0, "liver": 1.3, "heart": 1.4, "lung": 1.4, "hsct": 1.3,
+    "pancreas": 1.6, "intestine": 1.8,
+}
+# Le typage haute resolution est la norme en GCSH.
+ORGAN_HIGHRES_MULT = {"hsct": 1.5}
+SHOWCASE_OTHER_ORGAN_MULT = 1.5
 
 
 def _hla_era_factor(hla, resolution, year):
@@ -524,6 +755,22 @@ def _outcome_era_factor(outcome, year):
         return 0.8 if year >= 2010 else 1.0
     if outcome == "TCMR":
         return 0.4 if year < 2005 else 1.0
+    if outcome == "EBV":
+        return 0.0 if year < 1993 else 1.0
+    if outcome == "bronchiolitis_obliterans":
+        # Le BOS cede progressivement la place a la CLAD, plus large.
+        return 1.2 if year < 2012 else (1.0 if year < 2019 else 0.6)
+    if outcome == "chronic_lung_allograft_dysfunction":
+        return 0.0 if year < 2010 else min(1.6, 0.4 + 0.15 * (year - 2010))
+    if outcome == "primary_graft_dysfunction":
+        return 0.0 if year < 2003 else 1.0
+    if outcome == "early_allograft_dysfunction":
+        return 0.0 if year < 2006 else 1.0
+    if outcome == "HLA_loss_relapse":
+        return 0.0 if year < 2009 else 1.0
+    if outcome == "hepatitis_recurrence":
+        # Les antiviraux a action directe (2014) font chuter les recidives.
+        return 1.5 if year < 2014 else 0.4
     return 1.0
 
 
@@ -687,6 +934,137 @@ CARRIER_RATES = {
 INVERSE_REJECTION = {"small": 1.0, "large": 0.97}
 
 
+# Paires planifiees des organes AUTRES que le rein (le rein garde STRONG_PAIRS
+# et CLEAR_PAIRS ci-dessus). Chaque entree : (allele, complication) ; la
+# complication doit s'appliquer a l'organe (`labels.OUTCOME_ORGANS`) — un
+# garde-fou de `_build_model` le verifie. Ces paires sont FICTIVES : elles
+# donnent a chaque strate un paysage de signal a demontrer, pas un resultat.
+ORGAN_PAIRS = {
+    "liver": {
+        "strong": [
+            (SHOWCASE_HLA, "liver_chronic_rejection"),
+            ("HLA-B*08", "cholangitis_recurrence"),
+            ("HLA-DRB1*03", "cholangitis_recurrence"),
+            ("HLA-DRB1*13", "hepatitis_recurrence"),
+            ("HLA-A*02", "hcc_recurrence"),
+            ("HLA-mismatch", "acute_rejection"),
+            ("HLA-DQB1*02", "DSA"),
+        ],
+        "clear": [
+            ("HLA-B*35", "early_allograft_dysfunction"),
+            ("HLA-DRB1*15", "biliary_complications"),
+            ("HLA-A*24", "hepatitis_recurrence"),
+            ("HLA-DRB1*07", "TCMR"),
+            ("HLA-B*44", "CMV"),
+            ("HLA-C*07", "hcc_recurrence"),
+            ("HLA-DQB1*06", "liver_chronic_rejection"),
+            ("HLA-A*03", "NODAT"),
+        ],
+    },
+    "heart": {
+        "strong": [
+            (SHOWCASE_HLA, "cardiac_allograft_vasculopathy"),
+            (SHOWCASE_HLA, "DSA"),
+            ("HLA-DRB1*04", "cardiac_allograft_vasculopathy"),
+            ("HLA-mismatch", "cardiac_allograft_vasculopathy"),
+            ("HLA-eplet", "DSA"),
+            ("HLA-DRB1*11", "ABMR"),
+            ("HLA-DQB1*03", "patient_mortality"),
+        ],
+        "clear": [
+            ("HLA-A*02", "primary_graft_dysfunction"),
+            ("HLA-B*44", "acute_rejection"),
+            ("HLA-DRB1*01", "CMV"),
+            ("HLA-DRB1*15", "complement_activation"),
+            ("HLA-B*07", "graft_loss"),
+            ("HLA-DQB1*05", "mixed_rejection"),
+            ("HLA-C*03", "sensitization"),
+        ],
+    },
+    "lung": {
+        "strong": [
+            (SHOWCASE_HLA, "chronic_lung_allograft_dysfunction"),
+            ("HLA-eplet", "chronic_lung_allograft_dysfunction"),
+            ("HLA-DRB1*04", "bronchiolitis_obliterans"),
+            ("HLA-mismatch", "bronchiolitis_obliterans"),
+            ("HLA-DQB1*03", "DSA"),
+            ("HLA-A*02", "primary_graft_dysfunction"),
+        ],
+        "clear": [
+            ("HLA-B*44", "CMV"),
+            ("HLA-DRB1*15", "chronic_lung_allograft_dysfunction"),
+            ("HLA-A*01", "invasive_aspergillosis"),
+            ("HLA-DRB1*07", "acute_rejection"),
+            ("HLA-DQB1*06", "ABMR"),
+            ("HLA-B*35", "patient_mortality"),
+        ],
+    },
+    "hsct": {
+        "strong": [
+            ("HLA-mismatch", "acute_gvhd"),
+            ("HLA-mismatch", "chronic_gvhd"),
+            ("HLA-mismatch", "non_relapse_mortality"),
+            ("HLA-mismatch", "engraftment_failure"),
+            (SHOWCASE_HLA, "acute_gvhd"),
+            ("HLA-DPB1*03", "acute_gvhd"),
+            ("HLA-DRB1*15", "disease_relapse"),
+            ("HLA-DRB1*03", "HLA_loss_relapse"),
+            ("HLA-C*07", "HLA_loss_relapse"),
+            ("HLA-DQB1*02", "chronic_gvhd"),
+            ("HLA-eplet", "DSA"),
+        ],
+        "clear": [
+            ("HLA-B*07", "hsct_graft_rejection"),
+            ("HLA-A*02", "disease_relapse"),
+            ("HLA-DRB1*11", "engraftment_failure"),
+            ("HLA-C*03", "acute_gvhd"),
+            ("HLA-DPB1*04", "chronic_gvhd"),
+            ("HLA-B*44", "non_relapse_mortality"),
+            ("HLA-DRB1*04", "secondary_malignancy"),
+            ("HLA-A*24", "invasive_aspergillosis"),
+        ],
+    },
+    "pancreas": {
+        "strong": [
+            ("HLA-DRB1*04", "autoimmune_diabetes_recurrence"),
+            ("HLA-DRB1*03", "autoimmune_diabetes_recurrence"),
+            ("HLA-DQB1*03:02", "autoimmune_diabetes_recurrence"),
+            ("HLA-mismatch", "acute_rejection"),
+            ("HLA-eplet", "DSA"),
+        ],
+        "clear": [
+            ("HLA-DQB1*02", "autoimmune_diabetes_recurrence"),
+            ("HLA-DRB1*07", "pancreas_graft_thrombosis"),
+            ("HLA-A*24", "insulin_independence"),
+            ("HLA-B*44", "graft_loss"),
+            ("HLA-DRB1*15", "CMV"),
+        ],
+    },
+    "intestine": {
+        "strong": [
+            ("HLA-mismatch", "acute_gvhd"),
+            ("HLA-eplet", "DSA"),
+            ("HLA-DRB1*03", "acute_rejection"),
+        ],
+        "clear": [
+            ("HLA-A*02", "CMV"),
+            ("HLA-mismatch", "graft_loss"),
+            ("HLA-DRB1*15", "parenteral_nutrition_dependence"),
+        ],
+    },
+}
+
+# Paires vitrine a signal faible des autres organes (independance).
+ORGAN_WEAK_PAIRS = {
+    "liver": [(SHOWCASE_HLA, "CMV"), (SHOWCASE_HLA, "NODAT")],
+    "heart": [(SHOWCASE_HLA, "CMV"), (SHOWCASE_HLA, "skin_cancer")],
+    "lung": [(SHOWCASE_HLA, "CMV"), (SHOWCASE_HLA, "NODAT")],
+    "hsct": [(SHOWCASE_HLA, "CMV"), (SHOWCASE_HLA, "secondary_malignancy")],
+    "pancreas": [(SHOWCASE_HLA, "CMV")],
+    "intestine": [(SHOWCASE_HLA, "CMV")],
+}
+
+
 # =====================================================================
 # STATISTIQUES (stdlib uniquement)
 # =====================================================================
@@ -805,7 +1183,7 @@ class _Cumulative:
     """
 
     def __init__(self, items, weights):
-        self.items = list(items)
+        self.items = items if isinstance(items, list) else list(items)
         self.cum = []
         acc = 0.0
         for w in weights:
@@ -819,6 +1197,29 @@ class _Cumulative:
         r = rng.random() * self.total
         i = bisect.bisect_right(self.cum, r)
         return self.items[min(i, len(self.items) - 1)]
+
+
+class _LazyTables(dict):
+    """Cache `(organe, annee) -> tables de tirage`, construites au premier acces."""
+
+    def __init__(self, factory):
+        super().__init__()
+        self._factory = factory
+
+    def __missing__(self, key):
+        value = self[key] = self._factory(*key)
+        return value
+
+
+class _TableView:
+    """Vue d'une des tables d'un `_LazyTables` (0 = paire, 1 = allele, 2 = complication)."""
+
+    def __init__(self, tables, index):
+        self._tables = tables
+        self._index = index
+
+    def __getitem__(self, key):
+        return self._tables[key][self._index]
 
 
 def _year_weights():
@@ -856,6 +1257,29 @@ def _weighted_sample(rng, population, weights, k):
     return picked
 
 
+def _organ_hla_mult(organ, hla, resolution, locus):
+    """Facteur de popularite d'une entite HLA dans les articles d'un organe.
+
+    L'allele vitrine est EXEMPT : son contrat (cf. SHOWCASE_HLA) ne doit pas
+    dependre de l'organe.
+    """
+    if hla == SHOWCASE_HLA:
+        # Un peu plus cite hors rein, pour que sa fiche montre quelque chose
+        # dans chaque organe ; le rein (strate de reference) reste inchange.
+        return 1.0 if organ == "kidney" else SHOWCASE_OTHER_ORGAN_MULT
+    if resolution in ("mismatch_count", "eplet"):
+        return ORGAN_SPECIAL_MULT.get(organ, {}).get(hla, 1.0)
+    mult = ORGAN_LOCUS_MULT.get(organ, {}).get(locus, 1.0)
+    if resolution == "4-digit":
+        mult *= ORGAN_HIGHRES_MULT.get(organ, 1.0)
+    return mult
+
+
+def _outcome_pop(organ, outcome):
+    """Popularite de base d'une complication pour un organe."""
+    return OUTCOME_POPULARITY[outcome] * ORGAN_OUTCOME_MULT[organ].get(outcome, 1.0)
+
+
 def _build_model(rng, hla_rows, n_articles):
     """Planifie le paysage de signal et precalcule les tables de tirage.
 
@@ -866,10 +1290,17 @@ def _build_model(rng, hla_rows, n_articles):
     co-occurrence observee tombe alors sous n_a*n_b/N, et la depletion se lit
     directement dans les donnees : npmi, odds_ratio et Fisher s'accordent
     tous en signe parce qu'ils decoulent tous de la meme table.
+
+    MULTI-ORGANE. Les tables de tirage de la paire principale, des alleles et
+    des complications secondaires sont construites PAR ORGANE (et par annee) :
+    un article de coeur ne tire que des complications cardiaques ou partagees.
+    Les paires planifiees du rein sont celles d'origine ; les autres organes
+    ont les leurs (`ORGAN_PAIRS`).
     """
     regime = "small" if n_articles < SMALL_CORPUS else "large"
     resolution_of = {r["hla"]: r["resolution"] for r in hla_rows}
     parent_of = {r["hla"]: r["parent_hla"] for r in hla_rows}
+    locus_of = {r["hla"]: r["locus"] for r in hla_rows}
     children_of = defaultdict(list)
     for r in hla_rows:
         if r["resolution"] == "4-digit":
@@ -880,9 +1311,18 @@ def _build_model(rng, hla_rows, n_articles):
         if r["resolution"] in ("4-digit", "2-digit", "mismatch_count", "eplet")
     ]
     outcomes = list(OUTCOME_LABELS)
+    organ_outcomes = {org: outcomes_for_organ(org) for org in ORGAN_KEYS}
     pop_h = _hla_popularity()
 
     inverse = INVERSE_PAIRS[:SMALL_CORPUS_INVERSE] if regime == "small" else list(INVERSE_PAIRS)
+    organ_planned = [
+        (org, pair)
+        for org in ORGAN_KEYS if org in ORGAN_PAIRS
+        for kind in ("strong", "clear")
+        for pair in ORGAN_PAIRS[org][kind]
+    ] + [
+        (org, pair) for org, pairs in ORGAN_WEAK_PAIRS.items() for pair in pairs
+    ]
     planned = (STRONG_PAIRS + CLEAR_PAIRS + WEAK_PAIRS + MODERATE_PAIRS
                + RARE_CLEAR_PAIRS + inverse)
     for hla, outcome in planned:
@@ -890,6 +1330,16 @@ def _build_model(rng, hla_rows, n_articles):
         # silencieusement une paire jamais tiree.
         if hla not in resolution_of or outcome not in OUTCOME_LABELS:
             raise ValueError(f"paire planifiee inconnue : {(hla, outcome)}")
+    for org, (hla, outcome) in organ_planned:
+        if hla not in resolution_of or outcome not in OUTCOME_LABELS:
+            raise ValueError(f"paire planifiee inconnue : {(org, hla, outcome)}")
+        if org not in OUTCOME_ORGANS[outcome]:
+            raise ValueError(
+                f"{outcome} ne s'applique pas a l'organe {org} : {(hla, outcome)}"
+            )
+    for hla, outcome in STRONG_PAIRS + CLEAR_PAIRS + WEAK_PAIRS:
+        if "kidney" not in OUTCOME_ORGANS[outcome]:
+            raise ValueError(f"paire du rein sur une complication hors rein : {(hla, outcome)}")
 
     # Deux leviers distincts :
     #  * `enrich` MULTIPLIE pop(h) x pop(o) dans le tirage de la paire
@@ -901,47 +1351,82 @@ def _build_model(rng, hla_rows, n_articles):
     #    deprimerait mecaniquement toutes les AUTRES paires de h et ferait
     #    apparaitre de faux signaux inverses), et il donne a un allele peu
     #    cite un effectif proportionne a sa presence dans le corpus.
+    # `boost` est PAR ORGANE : la co-citation d'une paire du rein ne
+    # s'exerce que dans les articles de rein.
     enrich = {}
-    boost = {}
+    boost = {org: {} for org in ORGAN_KEYS}
     for pair in STRONG_PAIRS:
         # Les paires de l'allele vitrine ont la co-citation la plus nette : la
         # fiche d'accueil doit montrer des signaux forts quel que soit le seed.
         low, high = (0.40, 0.50) if pair[0] == SHOWCASE_HLA else (0.25, 0.45)
-        boost[pair] = rng.uniform(low, high)
+        boost["kidney"][pair] = rng.uniform(low, high)
     for pair in CLEAR_PAIRS:
-        boost[pair] = rng.uniform(0.10, 0.22)
+        boost["kidney"][pair] = rng.uniform(0.10, 0.22)
     for pair in WEAK_PAIRS:
         enrich[pair] = 1.0
+    for org in ORGAN_KEYS:
+        if org not in ORGAN_PAIRS:
+            continue
+        scale = ORGAN_BOOST_SCALE[org]
+        for pair in ORGAN_PAIRS[org]["strong"]:
+            low, high = (0.40, 0.50) if pair[0] == SHOWCASE_HLA else (0.25, 0.45)
+            boost[org][pair] = min(0.9, rng.uniform(low, high) * scale)
+        for pair in ORGAN_PAIRS[org]["clear"]:
+            boost[org][pair] = min(0.9, rng.uniform(0.10, 0.22) * scale)
+    # L'allele vitrine garde ses trois signaux forts (DSA, ABMR, perte du
+    # greffon) dans TOUS les organes ou la complication s'applique : sans cela,
+    # sa strate « tous les organes » les diluerait dans les articles des autres
+    # organes et son contrat (cf. SHOWCASE_HLA) ne tiendrait plus.
+    for org in ORGAN_KEYS:
+        if org == "kidney":
+            continue
+        for _, outcome in STRONG_PAIRS[:3]:
+            pair = (SHOWCASE_HLA, outcome)
+            if org in OUTCOME_ORGANS[outcome] and pair not in boost[org]:
+                boost[org][pair] = min(
+                    0.9, rng.uniform(0.40, 0.50) * ORGAN_BOOST_SCALE[org]
+                )
     reserved = set(planned) | {h for h, _ in MODERATE_PAIRS + RARE_CLEAR_PAIRS}
+    reserved |= {pair for _, pair in organ_planned}
+    inverse_hlas = {ih for ih, _ in inverse}
     # Candidats : paires de fond PEU attendues (entites peu citees), pour
     # que quelques co-citations supplementaires s'y lisent comme un signal.
-    candidates = [
-        (h, o) for h in mentionable for o in outcomes
-        if (h, o) not in reserved and h not in reserved
-        and 0 < pop_h[h] * OUTCOME_POPULARITY[o] < 0.08
-        and pop_h[h] >= RANDOM_CLEAR_MIN_POP
-        # Les complications les plus rares sont laissees aux paires
-        # « moderees », dont la significativite exige un attendu quasi nul.
-        and OUTCOME_POPULARITY[o] >= 0.18
-        and not any(h == ih for ih, _ in inverse)
-    ]
-    n_random = RANDOM_CLEAR_PAIRS if regime == "large" else 0
-    for pair in rng.sample(candidates, n_random):
-        boost[pair] = rng.uniform(0.12, 0.35)
+    for org in ORGAN_KEYS:
+        candidates = [
+            (h, o) for h in mentionable for o in organ_outcomes[org]
+            if (h, o) not in reserved and h not in reserved
+            and 0 < pop_h[h] * _outcome_pop(org, o) < 0.08
+            and pop_h[h] >= RANDOM_CLEAR_MIN_POP
+            # Les complications les plus rares sont laissees aux paires
+            # « moderees », dont la significativite exige un attendu quasi nul.
+            and _outcome_pop(org, o) >= 0.18
+            and h not in inverse_hlas
+        ]
+        n_random = (
+            round(RANDOM_CLEAR_PAIRS * ORGAN_WEIGHTS[org] / ORGAN_WEIGHTS["kidney"])
+            if regime == "large" else 0
+        )
+        for pair in rng.sample(candidates, min(n_random, len(candidates))):
+            boost[org][pair] = rng.uniform(0.12, 0.35)
     for pair in inverse:
         enrich[pair] = 0.0
     for pair in MODERATE_PAIRS + RARE_CLEAR_PAIRS:
         enrich[pair] = 0.0
-    boosts_of = defaultdict(list)
-    for (h, o), q in sorted(boost.items()):
-        boosts_of[h].append((o, q))
+    focus = {org: {} for org in ORGAN_KEYS}
+    for org, plan in ORGAN_PAIRS.items():
+        for kind, mult in (("clear", ORGAN_FOCUS_CLEAR), ("strong", ORGAN_FOCUS_STRONG)):
+            for h, _ in plan[kind]:
+                if h != SHOWCASE_HLA and resolution_of[h] in ("2-digit", "4-digit"):
+                    focus[org][h] = max(focus[org].get(h, 1.0), mult)
+    boosts_of = {org: defaultdict(list) for org in ORGAN_KEYS}
+    for org in ORGAN_KEYS:
+        for (h, o), q in sorted(boost[org].items()):
+            boosts_of[org][h].append((o, q))
 
     negated_rate = {}
-    pair_keys = []
     for hla in mentionable:
         for outcome in outcomes:
             pair = (hla, outcome)
-            pair_keys.append(pair)
             if pair not in enrich:
                 # Heterogeneite de fond, et quelques enrichissements non
                 # planifies : la litterature reelle n'est pas un plan.
@@ -957,16 +1442,44 @@ def _build_model(rng, hla_rows, n_articles):
                 negated_rate[pair] = NEGATED_RATE
 
     years, _ = _year_weights()
-    lead_by_year = {}
-    hla_by_year = {}
-    outcome_by_year = {}
-    for year in years:
-        w_h = {h: pop_h[h] * _hla_era_factor(h, resolution_of[h], year) for h in mentionable}
-        w_o = {o: OUTCOME_POPULARITY[o] * _outcome_era_factor(o, year) for o in outcomes}
-        weights = [w_h[h] * w_o[o] * enrich[(h, o)] for h, o in pair_keys]
-        lead_by_year[year] = _Cumulative(pair_keys, weights)
-        hla_by_year[year] = _Cumulative(mentionable, [w_h[h] for h in mentionable])
-        outcome_by_year[year] = _Cumulative(outcomes, [w_o[o] for o in outcomes])
+    # Les tables de tirage (organe x annee) sont construites A LA DEMANDE : un
+    # petit corpus (suites de tests) n'en utilise qu'une poignee, et le grand
+    # en construit au plus 7 x 37.
+    organ_static = {}
+    for org in ORGAN_KEYS:
+        outs = organ_outcomes[org]
+        organ_static[org] = (
+            outs,
+            [(h, o) for h in mentionable for o in outs],
+            [[enrich[(h, o)] for o in outs] for h in mentionable],
+            [
+                _organ_hla_mult(org, h, resolution_of[h], locus_of[h]) * focus[org].get(h, 1.0)
+                for h in mentionable
+            ],
+        )
+
+    def build_tables(org, year):
+        outs, pair_keys, enrich_rows, hla_mult = organ_static[org]
+        w_h = [
+            pop_h[h] * _hla_era_factor(h, resolution_of[h], year) * m
+            for h, m in zip(mentionable, hla_mult)
+        ]
+        w_o = [_outcome_pop(org, o) * _outcome_era_factor(o, year) for o in outs]
+        weights = [
+            wh * wo * e
+            for wh, row in zip(w_h, enrich_rows)
+            for wo, e in zip(w_o, row)
+        ]
+        return (
+            _Cumulative(pair_keys, weights),
+            _Cumulative(mentionable, w_h),
+            _Cumulative(outs, w_o),
+        )
+
+    tables = _LazyTables(build_tables)
+    lead_by = _TableView(tables, 0)
+    hla_by = _TableView(tables, 1)
+    outcome_by = _TableView(tables, 2)
 
     # Quota d'articles reserves a chaque paire protectrice : il assure de
     # franchir INVERSE_MIN_N (sans quoi la depletion serait supprimee comme du
@@ -995,9 +1508,9 @@ def _build_model(rng, hla_rows, n_articles):
         "outcome_era": {
             (o, y): _outcome_era_factor(o, y) for o in outcomes for y in years
         },
-        "lead_by_year": lead_by_year,
-        "hla_by_year": hla_by_year,
-        "outcome_by_year": outcome_by_year,
+        "lead_by": lead_by,
+        "hla_by": hla_by,
+        "outcome_by": outcome_by,
     }
 
 
@@ -1031,6 +1544,7 @@ def _build_author_model(rng, n_articles):
                 return name
         raise RuntimeError("vivier de noms epuise")
 
+    organ_picker = _Cumulative(ORGAN_KEYS, [ORGAN_WEIGHTS[o] for o in ORGAN_KEYS])
     total_weight = sum(p[1] for p in COUNTRY_PROFILES)
     n_heads = max(len(COUNTRY_PROFILES), round(n_articles / 24))
 
@@ -1077,6 +1591,8 @@ def _build_author_model(rng, n_articles):
                 "start": start,
                 "end": end,
                 "lab": lab,
+                # Organe de predilection du laboratoire.
+                "organ": organ_picker.pick(rng),
             })
 
     years, _ = _year_weights()
@@ -1095,6 +1611,7 @@ def _build_author_model(rng, n_articles):
         "heads_by_country": heads_by_country,
         "tails_by_country": tails_by_country,
         "countries": [p[0] for p in COUNTRY_PROFILES],
+        "organ_picker": organ_picker,
     }
 
 
@@ -1151,15 +1668,24 @@ def _sentence_for(rng, hla, outcome, negated):
     return sentence, hla_span, outcome_span, trigger
 
 
-def _article_entities(rng, model, year, forced):
+def _article_entities(rng, model, year, forced, organs):
     """Ensembles (alleles, complications) cites par un article.
+
+    `organs` : organes de l'article, le principal en tete. La paire
+    principale et les alleles secondaires suivent l'organe principal ; les
+    complications secondaires peuvent venir de n'importe quel organe de
+    l'article (un article pancreas-rein parle des deux greffons).
 
     Retourne deux listes ordonnees ; l'article emettra une mention pour
     chaque paire du produit cartesien.
     """
-    lead_h, lead_o = model["lead_by_year"][year].pick(rng)
+    primary = organs[0]
+    lead_h, lead_o = model["lead_by"][(primary, year)].pick(rng)
     hlas = [lead_h]
     outs = [lead_o]
+
+    def applicable(outcome):
+        return any(org in OUTCOME_ORGANS[outcome] for org in organs)
 
     # Compagnon hierarchique : un 4-digit cite souvent son groupe 2-digit,
     # et un 2-digit parfois l'un de ses 4-digit.
@@ -1173,26 +1699,30 @@ def _article_entities(rng, model, year, forced):
         hlas.extend(picked)
 
     for _ in range(rng.choices([0, 1, 2], weights=[60, 30, 10])[0]):
-        h = model["hla_by_year"][year].pick(rng)
+        h = model["hla_by"][(primary, year)].pick(rng)
         if h not in hlas:
             hlas.append(h)
     for _ in range(rng.choices([0, 1, 2], weights=[45, 40, 15])[0]):
-        o = model["outcome_by_year"][year].pick(rng)
+        organ = primary if len(organs) == 1 else organs[rng.randrange(len(organs))]
+        o = model["outcome_by"][(organ, year)].pick(rng)
         if o not in outs:
             outs.append(o)
 
-    # Co-citations conditionnelles des paires planifiees (cf. `boost`).
-    for h in list(hlas):
-        for o, q in model["boosts_of"].get(h, ()):
-            if o not in outs and model["outcome_era"][(o, year)] > 0 and rng.random() < q:
-                outs.append(o)
+    # Co-citations conditionnelles des paires planifiees (cf. `boost`), par
+    # organe de l'article.
+    for organ in organs:
+        for h in list(hlas):
+            for o, q in model["boosts_of"][organ].get(h, ()):
+                if o not in outs and model["outcome_era"][(o, year)] > 0 and rng.random() < q:
+                    outs.append(o)
 
-    # Porteurs des paires protectrices.
+    # Porteurs des paires protectrices (seulement si la complication
+    # s'applique a l'un des organes de l'article).
     carrier_h, carrier_o = model["carrier_rates"]
     for h, o in model["inverse"]:
         if carrier_h and rng.random() < carrier_h and h not in hlas:
             hlas.append(h)
-        if carrier_o and rng.random() < carrier_o and o not in outs:
+        if carrier_o and rng.random() < carrier_o and o not in outs and applicable(o):
             outs.append(o)
 
     if forced is not None:
@@ -1214,6 +1744,62 @@ def _article_entities(rng, model, year, forced):
                 hlas.remove(h)
 
     return hlas, outs
+
+
+def _assign_organs(rng, n_articles, heads_of, forced_idx):
+    """Organes de chaque article : liste d'organes, le principal en tete.
+
+    * le laboratoire (chef d'equipe) publie ~75 % du temps dans son organe de
+      predilection, sinon l'organe est tire selon `ORGAN_WEIGHTS` ;
+    * ~8 % des articles ajoutent un second organe plausible (pancreas-rein,
+      coeur-poumon...) ;
+    * les articles reserves aux paires protectrices / rares sont des articles
+      de REIN (leurs complications sont celles du rein) ;
+    * chaque organe du vocabulaire figure dans au moins un article : sur un
+      tres petit corpus, quelques articles non reserves sont reaffectes.
+    """
+    picker = _Cumulative(ORGAN_KEYS, [ORGAN_WEIGHTS[o] for o in ORGAN_KEYS])
+    assigned = []
+    for idx in range(n_articles):
+        if idx in forced_idx:
+            assigned.append(["kidney"])
+            continue
+        head = heads_of[idx]
+        primary = head["organ"] if rng.random() < HEAD_ORGAN_FIDELITY else picker.pick(rng)
+        organs = [primary]
+        seconds = SECOND_ORGANS.get(primary, [])
+        if seconds and rng.random() < MULTI_ORGAN_RATE:
+            second = _Cumulative([o for o, _ in seconds], [w for _, w in seconds]).pick(rng)
+            organs.append(second)
+        assigned.append(organs)
+
+    present = {org for organs in assigned for org in organs}
+    free = [i for i in range(n_articles) if i not in forced_idx]
+    for k, org in enumerate(o for o in ORGAN_KEYS if o not in present):
+        if not free:
+            raise ValueError("corpus trop petit pour couvrir tous les organes")
+        slot = free[(k + 1) * len(free) // (len(ORGAN_KEYS) + 1)]
+        assigned[slot] = [org]
+    return assigned
+
+
+def _organ_phrases(organs):
+    """Locutions anglaises (transplantation, receveurs, greffon) d'un article."""
+    if len(organs) == 1:
+        text = ORGAN_TEXT[organs[0]]
+        return (f"{text['noun']} transplantation", text["recip"], text["graft"])
+    nouns = " and ".join(ORGAN_TEXT[o]["noun"] for o in organs)
+    return (f"{nouns} transplantation", f"{nouns} transplant recipients", "allograft")
+
+
+def _graft_assignment(organs):
+    """Valeur de `graft_assignment` (texte libre du pipeline) derivee des organes."""
+    if len(organs) > 1:
+        return "Multi-organ"
+    return {
+        "kidney": "Kidney", "liver": "Liver", "heart": "Heart", "lung": "Lung",
+        "hsct": "HSCT", "pancreas": "Pancreas", "intestine": "Intestine",
+    }[organs[0]]
 
 
 def _generate(rng, n_articles):
@@ -1244,6 +1830,12 @@ def _generate(rng, n_articles):
         )
     ]
     forced_every = max(1, n_articles // (len(forced_queue) + 1))
+    forced_idx = set(range(0, n_articles, forced_every)[:len(forced_queue)])
+
+    # --- Passe 1 : annee, laboratoire et organes de chaque article -------
+    plan_years = [year_picker.pick(rng) for _ in range(n_articles)]
+    plan_heads = [authors_model["head_by_year"][y].pick(rng) for y in plan_years]
+    plan_organs = _assign_organs(rng, n_articles, plan_heads, forced_idx)
 
     pmids = set()
     articles = []
@@ -1257,28 +1849,41 @@ def _generate(rng, n_articles):
                 pmids.add(pmid)
                 break
 
-        year = year_picker.pick(rng)
-        head = authors_model["head_by_year"][year].pick(rng)
+        year = plan_years[article_idx]
+        head = plan_heads[article_idx]
+        organs = plan_organs[article_idx]
         country = head["country"]
 
+        # Revues : specialisees privilegiees pour l'organe de l'article.
         journals = [j for j in JOURNALS if j[3] <= year]
-        journal, abbrev, _, _ = rng.choices(journals, weights=[j[2] for j in journals])[0]
+        weights = []
+        for j in journals:
+            w = j[2]
+            if j[4]:
+                w *= (JOURNAL_ORGAN_MATCH if set(j[4]) & set(organs)
+                      else JOURNAL_ORGAN_OTHER)
+            weights.append(w)
+        journal, abbrev, _, _, _ = rng.choices(journals, weights=weights)[0]
 
         forced = None
-        if forced_queue and article_idx % forced_every == 0:
+        if forced_queue and article_idx in forced_idx:
             forced = forced_queue.pop(0)
 
-        hlas, outs = _article_entities(rng, model, year, forced)
+        hlas, outs = _article_entities(rng, model, year, forced, organs)
         pairs = [(h, o) for h in hlas for o in outs]
 
+        tx, recip, graft = _organ_phrases(organs)
         lead_hla, lead_outcome = hlas[0], outs[0]
         lead_label = OUTCOME_SPANS[lead_outcome][0]
-        title = rng.choice(TITLE_OPENERS).format(hla=lead_hla, outcome=lead_label)
+        title = rng.choice(TITLE_OPENERS).format(
+            hla=lead_hla, outcome=lead_label, tx=tx, recip=recip, graft=graft
+        )
         title = title[0].upper() + title[1:]
 
+        organ_text = ORGAN_TEXT[organs[0]]
         abstract = " ".join([
-            rng.choice(ABSTRACT_BACKGROUND),
-            rng.choice(ABSTRACT_METHODS),
+            rng.choice(organ_text["background"] + ABSTRACT_BACKGROUND),
+            rng.choice(ABSTRACT_METHODS + [organ_text["grading"]]).format(recip=recip),
             f"Patients were transplanted in {country}.",
             rng.choice(ABSTRACT_RESULTS).format(n=rng.randint(60, 4000)),
             rng.choice(ABSTRACT_CONCLUSION),
@@ -1297,9 +1902,8 @@ def _generate(rng, n_articles):
             # Les articles anciens ont eu plus de temps pour etre cites.
             "cited_by": max(0, int(rng.expovariate(1 / 18.0) * (1 + (YEAR_MAX - year) / 12))),
             "source": "synthetic",
-            "graft_assignment": "Kidney" if rng.random() < 0.88 else rng.choice(
-                ["Multi-organ", "Unspecified"]
-            ),
+            "graft_assignment": _graft_assignment(organs),
+            "organs": ";".join(organs),
         })
 
         # --- Auteurs ---
@@ -1326,30 +1930,72 @@ def _generate(rng, n_articles):
                 "sentence_idx": sentence_idx,
             })
 
-    # --- Associations : AGREGEES depuis pair_mentions -------------------
-    year_of = {a["pmid"]: a["year"] for a in articles}
+    associations = aggregate_strata(articles, pair_mentions)
 
-    pair_counts = Counter()
-    pair_positive = Counter()
-    pair_negated = Counter()
-    pair_first_year = {}
-    hla_articles = defaultdict(set)
-    outcome_articles = defaultdict(set)
+    pair_mentions.sort(key=lambda m: (m["pmid"], m["hla"], m["outcome"], m["sentence_idx"]))
+
+    hla_rows = _prune_unmentioned(candidate_rows, {m["hla"] for m in pair_mentions})
+
+    return articles, authors, hla_rows, pair_mentions, associations
+
+
+# =====================================================================
+# AGREGATION STRATIFIEE
+# =====================================================================
+
+def aggregate_strata(articles, pair_mentions):
+    """Associations par STRATE : `all` (tous les organes) puis chaque organe.
+
+    Une strate est un sous-corpus : son denominateur (`n_universe`) est le
+    nombre d'articles de la strate, et sa famille de tests FDR ne contient que
+    ses propres paires. Un article multi-organe compte dans chacune de ses
+    strates d'organe ; il compte toujours dans `all`.
+
+    Chaque ligne obeit au CONTRAT STATISTIQUE du module (table 2x2 unique,
+    reconstructible depuis n_cooccurrence, n_hla_total, n_outcome_total,
+    n_universe). Fonction publique : les tests recalculent a la main une petite
+    strate.
+    """
+    year_of = {a["pmid"]: a["year"] for a in articles}
+    organs_of = {a["pmid"]: a["organs"].split(";") for a in articles}
+    strata = [ALL_ORGANS] + list(ORGAN_KEYS)
+    universe = Counter({ALL_ORGANS: len(articles)})
+    for organs in organs_of.values():
+        for org in organs:
+            universe[org] += 1
+
+    pair_counts = {st: Counter() for st in strata}
+    pair_pos = {st: Counter() for st in strata}
+    pair_neg = {st: Counter() for st in strata}
+    first_year = {st: {} for st in strata}
+    hla_articles = {st: defaultdict(set) for st in strata}
+    outcome_articles = {st: defaultdict(set) for st in strata}
 
     for m in pair_mentions:
         key = (m["hla"], m["outcome"])
-        pair_counts[key] += 1
-        if m["polarity"] == "negated":
-            pair_negated[key] += 1
-        else:
-            pair_positive[key] += 1
         y = year_of[m["pmid"]]
-        pair_first_year[key] = min(pair_first_year.get(key, y), y)
-        hla_articles[m["hla"]].add(m["pmid"])
-        outcome_articles[m["outcome"]].add(m["pmid"])
+        for st in [ALL_ORGANS] + organs_of[m["pmid"]]:
+            pair_counts[st][key] += 1
+            if m["polarity"] == "negated":
+                pair_neg[st][key] += 1
+            else:
+                pair_pos[st][key] += 1
+            first_year[st][key] = min(first_year[st].get(key, y), y)
+            hla_articles[st][m["hla"]].add(m["pmid"])
+            outcome_articles[st][m["outcome"]].add(m["pmid"])
 
-    n_universe = len(articles)
+    rows = []
+    for st in strata:
+        rows.extend(_stratum_rows(
+            st, universe[st], pair_counts[st], pair_pos[st], pair_neg[st],
+            first_year[st], hla_articles[st], outcome_articles[st],
+        ))
+    return rows
 
+
+def _stratum_rows(stratum, n_universe, pair_counts, pair_pos, pair_neg,
+                  first_year, hla_articles, outcome_articles):
+    """Lignes d'association d'UNE strate, FDR calculee dans la strate."""
     rows = []
     for key in sorted(pair_counts):
         hla, outcome = key
@@ -1365,7 +2011,7 @@ def _generate(rng, n_articles):
         # se contredire : un npmi positif implique OR > 1, et inversement.
         # Toute correction appliquee ici vaut donc pour tous les nombres de
         # la ligne. Le signal inverse est produit en amont, par les
-        # comptages (cf. _build_pair_plan), jamais par un ajustement local.
+        # comptages (cf. _build_model), jamais par un ajustement local.
         #
         # a est le nombre d'articles portant la paire ; n_ab compte les
         # mentions et peut le majorer, donc on borne par les marges.
@@ -1390,11 +2036,12 @@ def _generate(rng, n_articles):
             p_two = 1.0
 
         rows.append({
+            "organ": stratum,
             "hla": hla,
             "outcome": outcome,
             "n_cooccurrence": n_ab,
-            "n_positive": pair_positive[key],
-            "n_negated": pair_negated[key],
+            "n_positive": pair_pos[key],
+            "n_negated": pair_neg[key],
             "n_hla_total": n_a,
             "n_outcome_total": n_b,
             "n_universe": n_universe,
@@ -1408,7 +2055,7 @@ def _generate(rng, n_articles):
             "fdr": None,
             "pval_two_sided": p_two,
             "fdr_two_sided": None,
-            "first_year": pair_first_year[key],
+            "first_year": first_year[key],
         })
 
     # La famille de tests de la correction FDR ne compte que les paires vues au
@@ -1416,6 +2063,8 @@ def _generate(rng, n_articles):
     # singletons avant de tester : avec un vocabulaire de ~900 alleles, les
     # milliers de paires vues une seule fois noieraient autrement la
     # correction de Benjamini-Hochberg. Une paire non testee a fdr = 1.0.
+    # La famille est celle de la STRATE : un organe n'herite pas du bruit des
+    # autres.
     testable = [i for i, r in enumerate(rows)
                 if r["n_cooccurrence"] >= MIN_TEST_COOCCURRENCE]
     fdr = [1.0] * len(rows)
@@ -1434,12 +2083,7 @@ def _generate(rng, n_articles):
         r["pval_two_sided"] = _format_pvalue(r["pval_two_sided"])
         r["fdr"] = _format_pvalue(f1)
         r["fdr_two_sided"] = _format_pvalue(f2)
-
-    pair_mentions.sort(key=lambda m: (m["pmid"], m["hla"], m["outcome"], m["sentence_idx"]))
-
-    hla_rows = _prune_unmentioned(candidate_rows, {m["hla"] for m in pair_mentions})
-
-    return articles, authors, hla_rows, pair_mentions, rows
+    return rows
 
 
 # =====================================================================
@@ -1448,13 +2092,14 @@ def _generate(rng, n_articles):
 
 ARTICLE_COLUMNS = ["pmid", "doi", "title", "abstract", "year", "journal",
                    "journal_abbrev", "country", "language", "cited_by",
-                   "source", "graft_assignment"]
+                   "source", "graft_assignment", "organs"]
 AUTHOR_COLUMNS = ["pmid", "author", "position"]
 HLA_COLUMNS = ["hla", "locus", "hla_class", "resolution", "parent_hla"]
 PAIR_MENTION_COLUMNS = ["pmid", "hla", "outcome", "sentence", "hla_span",
                         "outcome_span", "polarity", "negation_trigger",
                         "sentence_idx"]
-ASSOCIATION_COLUMNS = ["hla", "outcome", "n_cooccurrence", "n_positive",
+ORGAN_COLUMNS = ["organ", "label", "short_label", "slug"]
+ASSOCIATION_COLUMNS = ["organ", "hla", "outcome", "n_cooccurrence", "n_positive",
                        "n_negated", "n_hla_total", "n_outcome_total",
                        "n_universe", "pmi", "npmi", "log_odds", "odds_ratio",
                        "or_ci_low", "or_ci_high", "pval_fisher", "fdr",
@@ -1470,7 +2115,7 @@ def _write_csv(path, columns, rows):
 
 
 def main(out_dir, n_articles=DEFAULT_N_ARTICLES, seed=42):
-    """Genere les cinq CSV synthetiques dans out_dir (cree si absent).
+    """Genere les six CSV synthetiques dans out_dir (cree si absent).
 
     Deterministe : a seed fixee, les fichiers sont identiques octet pour octet.
     """
@@ -1485,6 +2130,10 @@ def main(out_dir, n_articles=DEFAULT_N_ARTICLES, seed=42):
     _write_csv(out / "hla_entities.csv", HLA_COLUMNS, hla_rows)
     _write_csv(out / "pair_mentions.csv", PAIR_MENTION_COLUMNS, pair_mentions)
     _write_csv(out / "associations.csv", ASSOCIATION_COLUMNS, associations)
+    _write_csv(out / "organs.csv", ORGAN_COLUMNS, [
+        {"organ": k, "label": label, "short_label": short, "slug": slug}
+        for k, label, short, slug in ORGANS
+    ])
 
     return {
         "articles": len(articles),
@@ -1492,6 +2141,7 @@ def main(out_dir, n_articles=DEFAULT_N_ARTICLES, seed=42):
         "hla_entities": len(hla_rows),
         "pair_mentions": len(pair_mentions),
         "associations": len(associations),
+        "organs": len(ORGANS),
     }
 
 

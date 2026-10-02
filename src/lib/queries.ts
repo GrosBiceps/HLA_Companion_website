@@ -11,6 +11,7 @@
 
 import { getDb } from "./db";
 import { CATEGORIES } from "./labels";
+import { ALL_ORGANS, ORGAN_KEYS, type OrganKey, type OrganSelection } from "./organ";
 import { LOCUS_ORDER as LOCI_ORDER, MAIN_LOCI } from "./loci";
 import type {
   Article,
@@ -20,6 +21,8 @@ import type {
   Author,
   EntityType,
   HlaEntity,
+  OrganCount,
+  OrganInfo,
   Outcome,
   MatrixAllele,
   MatrixOutcome,
@@ -28,6 +31,30 @@ import type {
   PublicationsPerYear,
   SignalLevel,
 } from "./types";
+
+/**
+ * STRATES. Chaque requete qui renvoie des comptes, des associations, un graphe,
+ * une matrice, une recherche ou un catalogue prend un `organ` optionnel
+ * (`all` par defaut = tous les organes). Les agregats precalcules
+ * (`associations`, `hla_organ_counts`, `outcome_organ_counts`) portent une
+ * colonne `organ` : on y lit LA STRATE demandee, jamais une somme de strates
+ * (chaque strate a son denominateur et sa famille FDR — cf. docs/ORGANES.md).
+ * Les listes d'articles, elles, se filtrent par la table `article_organs`.
+ *
+ * `organJoin` fabrique la jointure de strate sur un identifiant d'article ;
+ * pour `all` elle est vide (aucune jointure, aucun cout). Les parametres de la
+ * jointure PRECEDENT ceux du WHERE dans l'ordre du texte SQL.
+ */
+function organJoin(
+  organ: OrganSelection,
+  pmidExpr: string,
+): { sql: string; params: string[] } {
+  if (organ === ALL_ORGANS) return { sql: "", params: [] };
+  return {
+    sql: `JOIN article_organs ao ON ao.pmid = ${pmidExpr} AND ao.organ = ?`,
+    params: [organ],
+  };
+}
 
 /**
  * Ordre d'affichage du signal, exprime en SQL. `inverse` en tete : une piste
@@ -136,6 +163,7 @@ interface AssociationSqlRow {
   or_ci_high: number | null;
   fdr: number | null;
   fdr_two_sided: number | null;
+  n_universe: number | null;
 }
 
 function toAssociation(row: AssociationSqlRow): AssociationRow {
@@ -156,6 +184,7 @@ function toAssociation(row: AssociationSqlRow): AssociationRow {
     orCiHigh: row.or_ci_high,
     fdr: row.fdr,
     fdrTwoSided: row.fdr_two_sided,
+    nUniverse: row.n_universe,
   };
 }
 
@@ -171,20 +200,23 @@ function toAssociation(row: AssociationSqlRow): AssociationRow {
  * meme effectif — 15 groupes dans le corpus) depend de l'implementation
  * SQLite et pourrait changer d'une version a l'autre.
  */
-export function getAssociationsForAllele(hla: string): AssociationRow[] {
+export function getAssociationsForAllele(
+  hla: string,
+  organ: OrganSelection = ALL_ORGANS,
+): AssociationRow[] {
   const rows = getDb()
     .prepare(
       `SELECT a.hla, a.outcome, o.label, o.category,
               a.n_cooccurrence, a.n_positive, a.n_negated,
               a.signal_level, a.is_significant, a.first_year,
               a.npmi, a.odds_ratio, a.or_ci_low, a.or_ci_high,
-              a.fdr, a.fdr_two_sided
+              a.fdr, a.fdr_two_sided, a.n_universe
          FROM associations a
          JOIN outcomes o ON o.outcome = a.outcome
-        WHERE a.hla = ?
+        WHERE a.organ = ? AND a.hla = ?
         ORDER BY ${SIGNAL_ORDER_SQL}, a.n_cooccurrence DESC, a.outcome ASC`,
     )
-    .all(hla) as AssociationSqlRow[];
+    .all(organ, hla) as AssociationSqlRow[];
   return rows.map(toAssociation);
 }
 
@@ -220,7 +252,9 @@ interface PairMentionSqlRow {
 export function getPairMentions(
   hla: string,
   outcome: string,
+  organ: OrganSelection = ALL_ORGANS,
 ): PairMention[] {
+  const oj = organJoin(organ, "pm.pmid");
   const rows = getDb()
     .prepare(
       `SELECT pm.pair_mention_id, pm.pmid, pm.hla, pm.outcome, pm.sentence,
@@ -228,10 +262,11 @@ export function getPairMentions(
               ar.title, ar.year, ar.journal, ar.cited_by
          FROM pair_mentions pm
          JOIN articles ar ON ar.pmid = pm.pmid
+         ${oj.sql}
         WHERE pm.hla = ? AND pm.outcome = ?
         ORDER BY ar.year DESC, pm.pair_mention_id ASC`,
     )
-    .all(hla, outcome) as PairMentionSqlRow[];
+    .all(...oj.params, hla, outcome) as PairMentionSqlRow[];
 
   return rows.map((row) => ({
     pairMentionId: row.pair_mention_id,
@@ -276,6 +311,25 @@ export function getArticle(pmid: string): Article | null {
     .prepare(`SELECT * FROM articles WHERE pmid = ?`)
     .get(pmid) as ArticleSqlRow | undefined;
   if (!row) return null;
+  return toArticle(row);
+}
+
+/**
+ * Organes d'un article, l'organe PRINCIPAL en tete. Au moins un pour tout
+ * article du corpus (validation V11 du builder).
+ */
+export function getArticleOrgans(pmid: string): OrganKey[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT organ FROM article_organs WHERE pmid = ?
+          ORDER BY is_primary DESC, organ ASC`,
+      )
+      .all(pmid) as { organ: OrganKey }[]
+  ).map((r) => r.organ);
+}
+
+function toArticle(row: ArticleSqlRow): Article {
   return {
     pmid: row.pmid,
     doi: row.doi,
@@ -289,6 +343,7 @@ export function getArticle(pmid: string): Article | null {
     citedBy: row.cited_by,
     source: row.source,
     graftAssignment: row.graft_assignment,
+    organs: getArticleOrgans(row.pmid),
   };
 }
 
@@ -353,51 +408,85 @@ export interface CorpusStats {
  * declaree par le builder, alors qu'on veut ici le contenu reellement present
  * dans la base rendue.
  */
-export function getCorpusStats(): CorpusStats {
+export function getCorpusStats(organ: OrganSelection = ALL_ORGANS): CorpusStats {
   const db = getDb();
+  const byOrgan = organ !== ALL_ORGANS;
+  const oj = organJoin(organ, "ar.pmid");
 
   const articles = db
     .prepare(
-      `SELECT COUNT(*) AS n, MIN(year) AS year_min, MAX(year) AS year_max
-         FROM articles`,
+      `SELECT COUNT(*) AS n, MIN(ar.year) AS year_min, MAX(ar.year) AS year_max
+         FROM articles ar ${oj.sql}`,
     )
-    .get() as { n: number; year_min: number | null; year_max: number | null };
+    .get(...oj.params) as {
+    n: number;
+    year_min: number | null;
+    year_max: number | null;
+  };
 
-  const outcomes = db
-    .prepare(`SELECT COUNT(*) AS n FROM outcomes`)
-    .get() as { n: number };
-
-  const alleles = db
-    .prepare(`SELECT COUNT(*) AS n FROM hla_entities`)
-    .get() as { n: number };
+  // Un organe ne compte que les complications QUI S'Y APPLIQUENT (vocabulaire).
+  const outcomes = (
+    byOrgan
+      ? db
+          .prepare(`SELECT COUNT(*) AS n FROM outcome_organs WHERE organ = ?`)
+          .get(organ)
+      : db.prepare(`SELECT COUNT(*) AS n FROM outcomes`).get()
+  ) as { n: number };
 
   // Extension (vues d'ensemble) : memes principes, tout est compte dans la
-  // base rendue, rien n'est declare.
+  // base rendue, rien n'est declare. Pour un organe, on compte les entites
+  // HLA effectivement citees dans la strate.
   const allelesByResolution: Record<string, number> = {};
-  for (const row of db
-    .prepare(
-      `SELECT resolution, COUNT(*) AS n FROM hla_entities
-        GROUP BY resolution ORDER BY resolution`,
-    )
-    .all() as { resolution: string; n: number }[]) {
+  const resolutionRows = (
+    byOrgan
+      ? db
+          .prepare(
+            `SELECT h.resolution AS resolution, COUNT(*) AS n
+               FROM hla_organ_counts c
+               JOIN hla_entities h ON h.hla = c.hla
+              WHERE c.organ = ?
+              GROUP BY h.resolution ORDER BY h.resolution`,
+          )
+          .all(organ)
+      : db
+          .prepare(
+            `SELECT resolution, COUNT(*) AS n FROM hla_entities
+              GROUP BY resolution ORDER BY resolution`,
+          )
+          .all()
+  ) as { resolution: string; n: number }[];
+  let alleleTotal = 0;
+  for (const row of resolutionRows) {
     allelesByResolution[row.resolution] = row.n;
+    alleleTotal += row.n;
   }
 
   const sources = db
     .prepare(
-      `SELECT COUNT(DISTINCT journal) AS n_journals,
-              COUNT(DISTINCT country) AS n_countries
-         FROM articles`,
+      `SELECT COUNT(DISTINCT ar.journal) AS n_journals,
+              COUNT(DISTINCT ar.country) AS n_countries
+         FROM articles ar ${oj.sql}`,
     )
-    .get() as { n_journals: number; n_countries: number };
+    .get(...oj.params) as { n_journals: number; n_countries: number };
 
-  const authors = db
-    .prepare(`SELECT COUNT(*) AS n FROM authors`)
-    .get() as { n: number };
+  const authors = (
+    byOrgan
+      ? db
+          .prepare(
+            `SELECT COUNT(DISTINCT aa.author_id) AS n
+               FROM article_authors aa
+               JOIN article_organs ao ON ao.pmid = aa.pmid AND ao.organ = ?`,
+          )
+          .get(organ)
+      : db.prepare(`SELECT COUNT(*) AS n FROM authors`).get()
+  ) as { n: number };
 
   const mentions = db
-    .prepare(`SELECT COUNT(*) AS n FROM pair_mentions`)
-    .get() as { n: number };
+    .prepare(
+      `SELECT COALESCE(SUM(n_mentions), 0) AS n FROM outcome_organ_counts
+        WHERE organ = ?`,
+    )
+    .get(organ) as { n: number };
 
   const associationsBySignal: Record<SignalLevel, number> = {
     inverse: 0,
@@ -409,9 +498,10 @@ export function getCorpusStats(): CorpusStats {
   let nAssociations = 0;
   for (const row of db
     .prepare(
-      `SELECT signal_level, COUNT(*) AS n FROM associations GROUP BY signal_level`,
+      `SELECT signal_level, COUNT(*) AS n FROM associations
+        WHERE organ = ? GROUP BY signal_level`,
     )
-    .all() as { signal_level: SignalLevel; n: number }[]) {
+    .all(organ) as { signal_level: SignalLevel; n: number }[]) {
     associationsBySignal[row.signal_level] = row.n;
     nAssociations += row.n;
   }
@@ -419,7 +509,7 @@ export function getCorpusStats(): CorpusStats {
   return {
     nArticles: articles.n,
     nOutcomes: outcomes.n,
-    nAlleles: alleles.n,
+    nAlleles: alleleTotal,
     yearMin: articles.year_min,
     yearMax: articles.year_max,
     nAlleles2Digit: allelesByResolution["2-digit"] ?? 0,
@@ -486,20 +576,23 @@ export function getOutcome(outcome: string): Outcome | null {
  * `a.hla ASC` qui rend l'ordre des ex aequo deterministe. Sans lui, l'ordre
  * dependrait du plan de requete SQLite.
  */
-export function getAssociationsForOutcome(outcome: string): AssociationRow[] {
+export function getAssociationsForOutcome(
+  outcome: string,
+  organ: OrganSelection = ALL_ORGANS,
+): AssociationRow[] {
   const rows = getDb()
     .prepare(
       `SELECT a.hla, a.outcome, o.label, o.category,
               a.n_cooccurrence, a.n_positive, a.n_negated,
               a.signal_level, a.is_significant, a.first_year,
               a.npmi, a.odds_ratio, a.or_ci_low, a.or_ci_high,
-              a.fdr, a.fdr_two_sided
+              a.fdr, a.fdr_two_sided, a.n_universe
          FROM associations a
          JOIN outcomes o ON o.outcome = a.outcome
-        WHERE a.outcome = ?
+        WHERE a.organ = ? AND a.outcome = ?
         ORDER BY ${SIGNAL_ORDER_SQL}, a.n_cooccurrence DESC, a.hla ASC`,
     )
-    .all(outcome) as AssociationSqlRow[];
+    .all(organ, outcome) as AssociationSqlRow[];
   return rows.map(toAssociation);
 }
 
@@ -546,31 +639,41 @@ export function getArticleMentions(pmid: string): PairMention[] {
  * dans le corpus construit ; en cas de divergence, c'est la jointure qui dit
  * la verite, parce que c'est elle qui produit la liste affichee.
  */
-export function getAuthorPublications(authorId: string): Article[] {
+export function getAuthorPublications(
+  authorId: string,
+  organ: OrganSelection = ALL_ORGANS,
+): Article[] {
+  const oj = organJoin(organ, "ar.pmid");
   const rows = getDb()
     .prepare(
       `SELECT ar.*
          FROM articles ar
          JOIN article_authors aa ON aa.pmid = ar.pmid
+         ${oj.sql}
         WHERE aa.author_id = ?
         ORDER BY ar.year DESC, ar.pmid ASC`,
     )
-    .all(authorId) as ArticleSqlRow[];
+    .all(...oj.params, authorId) as ArticleSqlRow[];
 
-  return rows.map((row) => ({
-    pmid: row.pmid,
-    doi: row.doi,
-    title: row.title,
-    abstract: row.abstract,
-    year: row.year,
-    journal: row.journal,
-    journalAbbrev: row.journal_abbrev,
-    country: row.country,
-    language: row.language,
-    citedBy: row.cited_by,
-    source: row.source,
-    graftAssignment: row.graft_assignment,
-  }));
+  return rows.map(toArticle);
+}
+
+/**
+ * Melange d'organes d'un auteur : articles distincts par organe (un article
+ * multi-organe compte dans chacun). Descriptif — ce que le corpus lui
+ * attribue, pas ce qu'il etudie.
+ */
+export function getAuthorOrganMix(authorId: string): OrganCount[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT ao.organ AS organ, COUNT(DISTINCT aa.pmid) AS n
+         FROM article_authors aa
+         JOIN article_organs ao ON ao.pmid = aa.pmid
+        WHERE aa.author_id = ?
+        GROUP BY ao.organ`,
+    )
+    .all(authorId) as { organ: OrganKey; n: number }[];
+  return orderedOrganCounts(rows.map((r) => ({ organ: r.organ, nArticles: r.n })));
 }
 
 /** Une entite (HLA ou complication) avec son effectif chez CET auteur. */
@@ -593,8 +696,13 @@ export interface AuthorInterests {
  * Ce n'est pas une declaration sur ce que l'auteur etudie : c'est ce que le
  * corpus indexe lui attribue. La fiche le dit en toutes lettres.
  */
-export function getAuthorInterests(authorId: string): AuthorInterests {
+export function getAuthorInterests(
+  authorId: string,
+  organ: OrganSelection = ALL_ORGANS,
+): AuthorInterests {
   const db = getDb();
+  const ojHla = organJoin(organ, "hm.pmid");
+  const ojOut = organJoin(organ, "om.pmid");
 
   const hlaRows = db
     .prepare(
@@ -603,11 +711,12 @@ export function getAuthorInterests(authorId: string): AuthorInterests {
          FROM hla_mentions hm
          JOIN article_authors aa ON aa.pmid = hm.pmid
          JOIN hla_entities h ON h.hla = hm.hla
+         ${ojHla.sql}
         WHERE aa.author_id = ?
         GROUP BY h.hla
         ORDER BY n_articles DESC, h.hla ASC`,
     )
-    .all(authorId) as (HlaEntityRow & { n_articles: number })[];
+    .all(...ojHla.params, authorId) as (HlaEntityRow & { n_articles: number })[];
 
   const outcomeRows = db
     .prepare(
@@ -616,11 +725,12 @@ export function getAuthorInterests(authorId: string): AuthorInterests {
          FROM outcome_mentions om
          JOIN article_authors aa ON aa.pmid = om.pmid
          JOIN outcomes o ON o.outcome = om.outcome
+         ${ojOut.sql}
         WHERE aa.author_id = ?
         GROUP BY o.outcome
         ORDER BY n_articles DESC, o.label ASC`,
     )
-    .all(authorId) as (OutcomeSqlRow & { n_articles: number })[];
+    .all(...ojOut.params, authorId) as (OutcomeSqlRow & { n_articles: number })[];
 
   return {
     hla: hlaRows.map((row) => ({
@@ -652,7 +762,11 @@ export interface CoAuthor {
  * apparaitrait en tete de sa propre liste de co-auteurs, avec le compte de
  * toutes ses publications — un artefact de jointure presente comme un fait.
  */
-export function getCoAuthors(authorId: string): CoAuthor[] {
+export function getCoAuthors(
+  authorId: string,
+  organ: OrganSelection = ALL_ORGANS,
+): CoAuthor[] {
+  const oj = organJoin(organ, "mine.pmid");
   const rows = getDb()
     .prepare(
       `SELECT co.author_id, co.display_name,
@@ -660,11 +774,12 @@ export function getCoAuthors(authorId: string): CoAuthor[] {
          FROM article_authors mine
          JOIN article_authors theirs ON theirs.pmid = mine.pmid
          JOIN authors co ON co.author_id = theirs.author_id
+         ${oj.sql}
         WHERE mine.author_id = ? AND theirs.author_id <> ?
         GROUP BY co.author_id
         ORDER BY n_shared DESC, co.display_name ASC`,
     )
-    .all(authorId, authorId) as {
+    .all(...oj.params, authorId, authorId) as {
     author_id: string;
     display_name: string;
     n_shared: number;
@@ -803,12 +918,20 @@ function nodeKey(type: GraphNodeType, id: string): string {
  * separe sainement des cles d'outcome. `hla_entities` puis `outcomes` font
  * autorite, dans cet ordre.
  */
-function resolveCenter(centerId: string): GraphNode | null {
+function resolveCenter(
+  centerId: string,
+  organ: OrganSelection = ALL_ORGANS,
+): GraphNode | null {
   const db = getDb();
 
   const hla = db
-    .prepare(`SELECT hla, n_mentions FROM hla_entities WHERE hla = ?`)
-    .get(centerId) as { hla: string; n_mentions: number } | undefined;
+    .prepare(
+      `SELECT h.hla, COALESCE(c.n_mentions, 0) AS n_mentions
+         FROM hla_entities h
+         LEFT JOIN hla_organ_counts c ON c.hla = h.hla AND c.organ = ?
+        WHERE h.hla = ?`,
+    )
+    .get(organ, centerId) as { hla: string; n_mentions: number } | undefined;
   if (hla) {
     return {
       id: hla.hla,
@@ -822,10 +945,14 @@ function resolveCenter(centerId: string): GraphNode | null {
 
   const outcome = db
     .prepare(
-      `SELECT outcome, label, category, n_mentions
-         FROM outcomes WHERE outcome = ?`,
+      `SELECT o.outcome, o.label, o.category,
+              COALESCE(c.n_mentions, 0) AS n_mentions
+         FROM outcomes o
+         LEFT JOIN outcome_organ_counts c
+                ON c.outcome = o.outcome AND c.organ = ?
+        WHERE o.outcome = ?`,
     )
-    .get(centerId) as OutcomeSqlRow | undefined;
+    .get(organ, centerId) as OutcomeSqlRow | undefined;
   if (outcome) {
     return {
       id: outcome.outcome,
@@ -920,8 +1047,9 @@ export function getNeighborhood(
   centerId: string,
   depth: number,
   minSignal?: SignalLevel,
+  organ: OrganSelection = ALL_ORGANS,
 ): Neighborhood {
-  const center = resolveCenter(centerId);
+  const center = resolveCenter(centerId, organ);
   if (!center) {
     return { center: null, nodes: [], edges: [], truncated: false };
   }
@@ -937,13 +1065,13 @@ export function getNeighborhood(
     `SELECT ${NEIGHBOR_COLUMNS}
        FROM associations a
        JOIN outcomes o ON o.outcome = a.outcome
-      WHERE a.hla = ?`,
+      WHERE a.organ = ? AND a.hla = ?`,
   );
   const byOutcome = db.prepare(
     `SELECT ${NEIGHBOR_COLUMNS}
        FROM associations a
        JOIN outcomes o ON o.outcome = a.outcome
-      WHERE a.outcome = ?`,
+      WHERE a.organ = ? AND a.outcome = ?`,
   );
 
   const nodes = new Map<string, GraphNode>();
@@ -953,8 +1081,8 @@ export function getNeighborhood(
   // Effectifs HLA, pour dimensionner les noeuds decouverts en chemin.
   const hlaMentions = new Map<string, number>();
   for (const row of db
-    .prepare(`SELECT hla, n_mentions FROM hla_entities`)
-    .all() as { hla: string; n_mentions: number }[]) {
+    .prepare(`SELECT hla, n_mentions FROM hla_organ_counts WHERE organ = ?`)
+    .all(organ) as { hla: string; n_mentions: number }[]) {
     hlaMentions.set(row.hla, row.n_mentions);
   }
 
@@ -965,7 +1093,9 @@ export function getNeighborhood(
 
     for (const from of frontier) {
       const rows = (
-        from.type === "hla" ? byHla.all(from.id) : byOutcome.all(from.id)
+        from.type === "hla"
+          ? byHla.all(organ, from.id)
+          : byOutcome.all(organ, from.id)
       ) as NeighborSqlRow[];
 
       for (const row of rows) {
@@ -1026,10 +1156,10 @@ export function getNeighborhood(
   if (outcomeIds.length > 0) {
     const rows = db
       .prepare(
-        `SELECT outcome, n_mentions FROM outcomes
-          WHERE outcome IN (${outcomeIds.map(() => "?").join(",")})`,
+        `SELECT outcome, n_mentions FROM outcome_organ_counts
+          WHERE organ = ? AND outcome IN (${outcomeIds.map(() => "?").join(",")})`,
       )
-      .all(...outcomeIds) as { outcome: string; n_mentions: number }[];
+      .all(organ, ...outcomeIds) as { outcome: string; n_mentions: number }[];
     for (const row of rows) {
       const node = nodes.get(nodeKey("outcome", row.outcome));
       if (node) node.nMentions = row.n_mentions;
@@ -1059,7 +1189,9 @@ export function getNeighborhood(
  * le plus d'aretes de fort signal, puis le plus mentionne — c'est le point
  * d'entree le plus informatif, et il reste valable quel que soit le corpus.
  */
-export function getDefaultGraphCenter(): string | null {
+export function getDefaultGraphCenter(
+  organ: OrganSelection = ALL_ORGANS,
+): string | null {
   const row = getDb()
     .prepare(
       `SELECT a.hla,
@@ -1068,11 +1200,14 @@ export function getDefaultGraphCenter(): string | null {
               COUNT(*) AS n_aretes
          FROM associations a
          JOIN hla_entities h ON h.hla = a.hla
+         LEFT JOIN hla_organ_counts c ON c.hla = a.hla AND c.organ = a.organ
+        WHERE a.organ = ?
         GROUP BY a.hla
-        ORDER BY n_forts DESC, n_aretes DESC, h.n_mentions DESC, a.hla ASC
+        ORDER BY n_forts DESC, n_aretes DESC, COALESCE(c.n_mentions, 0) DESC,
+                 a.hla ASC
         LIMIT 1`,
     )
-    .get() as { hla: string } | undefined;
+    .get(organ) as { hla: string } | undefined;
   return row?.hla ?? null;
 }
 
@@ -1106,9 +1241,11 @@ const LOCUS_ORDER: readonly string[] = LOCI_ORDER;
 export function getAssociationMatrix(
   resolution: "2-digit" | "4-digit" = "2-digit",
   locus?: string,
+  organ: OrganSelection = ALL_ORGANS,
 ): AssociationMatrix {
   const db = getDb();
-  // Filtre de locus facultatif : un 4-digit complet (~900 lignes) est trop
+  const byOrgan = organ !== ALL_ORGANS;
+  // Filtre de locus facultatif : un 4-digit complet (~1 000 lignes) est trop
   // lourd pour une grille DOM, la page matrice le pagine par locus.
   const locusFilter = locus ? "AND h.locus = ?" : "";
   const locusParams = locus ? [locus] : [];
@@ -1120,15 +1257,25 @@ export function getAssociationMatrix(
     (c, i) => `WHEN '${c}' THEN ${i}`,
   ).join(" ")} ELSE ${CATEGORIES.length} END`;
 
+  // Lignes : pour « tous les organes », toutes les entites de la resolution
+  // (une ligne vide est une information) ; pour un organe, celles citees dans
+  // sa strate — les ~1 000 alleles d'un corpus entier n'ont aucun sens dans
+  // une strate de 200 articles.
   const alleles = (
     db
       .prepare(
-        `SELECT h.hla, h.locus, h.hla_class, h.n_mentions
+        `SELECT h.hla, h.locus, h.hla_class,
+                COALESCE(c.n_mentions, h.n_mentions) AS n_mentions
            FROM hla_entities h
+           ${
+             byOrgan
+               ? "JOIN hla_organ_counts c ON c.hla = h.hla AND c.organ = ?"
+               : "LEFT JOIN hla_organ_counts c ON c.hla = h.hla AND c.organ = ?"
+           }
           WHERE h.resolution = ? ${locusFilter}
           ORDER BY h.hla_class ASC, ${locusCase}, h.hla ASC`,
       )
-      .all(resolution, ...locusParams) as {
+      .all(organ, resolution, ...locusParams) as {
       hla: string;
       locus: string;
       hla_class: string;
@@ -1143,14 +1290,27 @@ export function getAssociationMatrix(
     }),
   );
 
+  // Colonnes : « tous les organes » = toutes les complications ; un organe =
+  // celles qui s'y appliquent (vocabulaire `outcome_organs`). Les paires de la
+  // strate qui portent sur une complication d'un AUTRE organe (articles
+  // concernant deux organes) ne sont pas representees : elles sont comptees
+  // (`nCellsOutsideOrgan`) et la page le dit.
   const outcomes = (
     db
       .prepare(
-        `SELECT o.outcome, o.label, o.category, o.n_mentions
+        `SELECT o.outcome, o.label, o.category,
+                COALESCE(c.n_mentions, ${byOrgan ? "0" : "o.n_mentions"}) AS n_mentions
            FROM outcomes o
+           LEFT JOIN outcome_organ_counts c
+                  ON c.outcome = o.outcome AND c.organ = ?
+          ${
+            byOrgan
+              ? "WHERE o.outcome IN (SELECT outcome FROM outcome_organs WHERE organ = ?)"
+              : ""
+          }
           ORDER BY ${categoryCase}, o.label ASC`,
       )
-      .all() as OutcomeSqlRow[]
+      .all(...(byOrgan ? [organ, organ] : [organ])) as OutcomeSqlRow[]
   ).map(
     (row): MatrixOutcome => ({
       outcome: row.outcome,
@@ -1167,10 +1327,15 @@ export function getAssociationMatrix(
                 a.n_cooccurrence, a.n_negated, a.npmi
            FROM associations a
            JOIN hla_entities h ON h.hla = a.hla
-          WHERE h.resolution = ? ${locusFilter}
+          WHERE a.organ = ? AND h.resolution = ? ${locusFilter}
+            ${
+              byOrgan
+                ? "AND a.outcome IN (SELECT outcome FROM outcome_organs WHERE organ = ?)"
+                : ""
+            }
           ORDER BY a.hla ASC, a.outcome ASC`,
       )
-      .all(resolution, ...locusParams) as {
+      .all(organ, resolution, ...locusParams, ...(byOrgan ? [organ] : [])) as {
       hla: string;
       outcome: string;
       signal_level: SignalLevel;
@@ -1191,26 +1356,51 @@ export function getAssociationMatrix(
     }),
   );
 
+  let nCellsOutsideOrgan = 0;
+  if (byOrgan) {
+    nCellsOutsideOrgan = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n
+             FROM associations a
+             JOIN hla_entities h ON h.hla = a.hla
+            WHERE a.organ = ? AND h.resolution = ? ${locusFilter}
+              AND a.outcome NOT IN
+                  (SELECT outcome FROM outcome_organs WHERE organ = ?)`,
+        )
+        .get(organ, resolution, ...locusParams, organ) as { n: number }
+    ).n;
+  }
+
   return {
+    organ,
     resolution,
     locus: locus ?? null,
-    loci: getMatrixLoci(resolution),
+    loci: getMatrixLoci(resolution, organ),
     alleles,
     outcomes,
     cells,
+    nCellsOutsideOrgan,
   };
 }
 
 /** Loci portant des alleles a la resolution demandee, avec leur effectif. */
 export function getMatrixLoci(
   resolution: "2-digit" | "4-digit",
+  organ: OrganSelection = ALL_ORGANS,
 ): { locus: string; n: number }[] {
+  const byOrgan = organ !== ALL_ORGANS;
   const rows = getDb()
     .prepare(
-      `SELECT locus, COUNT(*) AS n FROM hla_entities
-        WHERE resolution = ? GROUP BY locus`,
+      `SELECT h.locus AS locus, COUNT(*) AS n
+         FROM hla_entities h
+         ${byOrgan ? "JOIN hla_organ_counts c ON c.hla = h.hla AND c.organ = ?" : ""}
+        WHERE h.resolution = ? GROUP BY h.locus`,
     )
-    .all(resolution) as { locus: string; n: number }[];
+    .all(...(byOrgan ? [organ] : []), resolution) as {
+    locus: string;
+    n: number;
+  }[];
   const rank = (l: string) => {
     const i = LOCUS_ORDER.indexOf(l);
     return i === -1 ? LOCUS_ORDER.length : i;
@@ -1228,12 +1418,16 @@ export function getMatrixLoci(
  * Compte depuis `articles` (contenu reellement present), comme
  * `getCorpusStats`, plutot que depuis une valeur declaree.
  */
-export function getPublicationsByYear(): PublicationsPerYear[] {
+export function getPublicationsByYear(
+  organ: OrganSelection = ALL_ORGANS,
+): PublicationsPerYear[] {
+  const oj = organJoin(organ, "ar.pmid");
   const rows = getDb()
     .prepare(
-      `SELECT year, COUNT(*) AS n FROM articles GROUP BY year ORDER BY year`,
+      `SELECT ar.year AS year, COUNT(*) AS n FROM articles ar ${oj.sql}
+        GROUP BY ar.year ORDER BY ar.year`,
     )
-    .all() as { year: number; n: number }[];
+    .all(...oj.params) as { year: number; n: number }[];
   if (rows.length === 0) return [];
 
   const byYear = new Map(rows.map((r) => [r.year, r.n]));
@@ -1282,10 +1476,12 @@ export function getSignalHighlights({
   levels = ["strong", "clear"],
   resolutions = ["2-digit", "4-digit"],
   limit = 12,
+  organ = ALL_ORGANS,
 }: {
   levels?: SignalLevel[];
   resolutions?: ("2-digit" | "4-digit")[];
   limit?: number;
+  organ?: OrganSelection;
 } = {}): SignalHighlight[] {
   if (levels.length === 0 || resolutions.length === 0 || limit <= 0) return [];
   const levelOrder = `CASE a.signal_level ${levels
@@ -1299,12 +1495,13 @@ export function getSignalHighlights({
          FROM associations a
          JOIN hla_entities h ON h.hla = a.hla
          JOIN outcomes o ON o.outcome = a.outcome
-        WHERE a.signal_level IN (${levels.map(() => "?").join(", ")})
+        WHERE a.organ = ?
+          AND a.signal_level IN (${levels.map(() => "?").join(", ")})
           AND h.resolution IN (${resolutions.map(() => "?").join(", ")})
         ORDER BY ${levelOrder}, a.n_cooccurrence DESC, a.hla ASC, a.outcome ASC
         LIMIT ?`,
     )
-    .all(...levels, ...resolutions, ...levels, limit) as {
+    .all(organ, ...levels, ...resolutions, ...levels, limit) as {
     hla: string;
     locus: string;
     hla_class: string;
@@ -1345,25 +1542,38 @@ export interface LocusOverview {
  * `perLocus` alleles les plus mentionnes, toutes resolutions alleliques
  * confondues. Seuls les loci portant au moins un allele sont rendus.
  */
-export function getLocusOverview(perLocus = 3): LocusOverview[] {
+export function getLocusOverview(
+  perLocus = 3,
+  organ: OrganSelection = ALL_ORGANS,
+): LocusOverview[] {
   const db = getDb();
+  const byOrgan = organ !== ALL_ORGANS;
   const loci = db
     .prepare(
-      `SELECT locus, hla_class,
-              SUM(resolution = '2-digit') AS n2,
-              SUM(resolution = '4-digit') AS n4
-         FROM hla_entities
-        WHERE resolution IN ('2-digit', '4-digit')
-        GROUP BY locus, hla_class`,
+      `SELECT h.locus, h.hla_class,
+              SUM(h.resolution = '2-digit') AS n2,
+              SUM(h.resolution = '4-digit') AS n4
+         FROM hla_entities h
+         ${byOrgan ? "JOIN hla_organ_counts c ON c.hla = h.hla AND c.organ = ?" : ""}
+        WHERE h.resolution IN ('2-digit', '4-digit')
+        GROUP BY h.locus, h.hla_class`,
     )
-    .all() as { locus: string; hla_class: string; n2: number; n4: number }[];
+    .all(...(byOrgan ? [organ] : [])) as {
+    locus: string;
+    hla_class: string;
+    n2: number;
+    n4: number;
+  }[];
   // L'accueil presente les six loci du typage de routine ; DRB3/4/5 et DQA1
-  // sont disponibles dans l'index des alleles.
+  // sont disponibles dans l'index des allèles.
   const main: readonly string[] = MAIN_LOCI;
   const top = db.prepare(
-    `SELECT hla, resolution, n_mentions FROM hla_entities
-      WHERE locus = ? AND resolution IN ('2-digit', '4-digit')
-      ORDER BY n_mentions DESC, hla ASC LIMIT ?`,
+    `SELECT h.hla, h.resolution, COALESCE(c.n_mentions, 0) AS n_mentions
+       FROM hla_entities h
+       LEFT JOIN hla_organ_counts c ON c.hla = h.hla AND c.organ = ?
+      WHERE h.locus = ? AND h.resolution IN ('2-digit', '4-digit')
+        ${byOrgan ? "AND c.hla IS NOT NULL" : ""}
+      ORDER BY n_mentions DESC, h.hla ASC LIMIT ?`,
   );
   const rank = (l: string) => {
     const i = LOCUS_ORDER.indexOf(l);
@@ -1378,7 +1588,7 @@ export function getLocusOverview(perLocus = 3): LocusOverview[] {
       nAlleles2Digit: l.n2,
       nAlleles4Digit: l.n4,
       topAlleles: (
-        top.all(l.locus, perLocus) as {
+        top.all(organ, l.locus, perLocus) as {
           hla: string;
           resolution: string;
           n_mentions: number;
@@ -1400,13 +1610,25 @@ export interface CategoryOverview {
  * `CATEGORIES` ; a l'interieur, par mentions decroissantes. Libelles joints
  * depuis `outcomes` — jamais la cle technique.
  */
-export function getOutcomesByCategory(): CategoryOverview[] {
+export function getOutcomesByCategory(
+  organ: OrganSelection = ALL_ORGANS,
+): CategoryOverview[] {
+  const byOrgan = organ !== ALL_ORGANS;
   const rows = getDb()
     .prepare(
-      `SELECT outcome, label, category, n_mentions FROM outcomes
-        ORDER BY n_mentions DESC, label ASC`,
+      `SELECT o.outcome, o.label, o.category,
+              COALESCE(c.n_mentions, 0) AS n_mentions
+         FROM outcomes o
+         LEFT JOIN outcome_organ_counts c
+                ON c.outcome = o.outcome AND c.organ = ?
+         ${
+           byOrgan
+             ? "WHERE o.outcome IN (SELECT outcome FROM outcome_organs WHERE organ = ?)"
+             : ""
+         }
+        ORDER BY n_mentions DESC, o.label ASC`,
     )
-    .all() as OutcomeSqlRow[];
+    .all(...(byOrgan ? [organ, organ] : [organ])) as OutcomeSqlRow[];
   const byCat = new Map<string, CategoryOverview>();
   for (const r of rows) {
     let entry = byCat.get(r.category);
@@ -1427,13 +1649,39 @@ export function getOutcomesByCategory(): CategoryOverview[] {
 }
 
 /** Auteurs les plus publies du corpus (effectif descriptif). */
-export function getTopAuthors(limit = 6): Author[] {
+export function getTopAuthors(
+  limit = 6,
+  organ: OrganSelection = ALL_ORGANS,
+): Author[] {
+  if (organ === ALL_ORGANS) {
+    const rows = getDb()
+      .prepare(
+        `SELECT author_id, display_name, n_publications FROM authors
+          ORDER BY n_publications DESC, display_name ASC LIMIT ?`,
+      )
+      .all(limit) as {
+      author_id: string;
+      display_name: string;
+      n_publications: number;
+    }[];
+    return rows.map((r) => ({
+      authorId: r.author_id,
+      displayName: r.display_name,
+      nPublications: r.n_publications,
+    }));
+  }
+  // Dans un organe : publications de CETTE strate.
   const rows = getDb()
     .prepare(
-      `SELECT author_id, display_name, n_publications FROM authors
-        ORDER BY n_publications DESC, display_name ASC LIMIT ?`,
+      `SELECT au.author_id, au.display_name,
+              COUNT(DISTINCT aa.pmid) AS n_publications
+         FROM article_authors aa
+         JOIN authors au ON au.author_id = aa.author_id
+         JOIN article_organs ao ON ao.pmid = aa.pmid AND ao.organ = ?
+        GROUP BY au.author_id
+        ORDER BY n_publications DESC, au.display_name ASC LIMIT ?`,
     )
-    .all(limit) as {
+    .all(organ, limit) as {
     author_id: string;
     display_name: string;
     n_publications: number;
@@ -1492,64 +1740,91 @@ function densifyYears(rows: { year: number; n: number }[]): YearCount[] {
 }
 
 /** Articles distincts mentionnant l'allele, par annee (serie dense). */
-export function getAlleleYearCounts(hla: string): YearCount[] {
+export function getAlleleYearCounts(
+  hla: string,
+  organ: OrganSelection = ALL_ORGANS,
+): YearCount[] {
+  const oj = organJoin(organ, "hm.pmid");
   const rows = getDb()
     .prepare(
       `SELECT ar.year AS year, COUNT(DISTINCT hm.pmid) AS n
          FROM hla_mentions hm
          JOIN articles ar ON ar.pmid = hm.pmid
+         ${oj.sql}
         WHERE hm.hla = ?
         GROUP BY ar.year`,
     )
-    .all(hla) as { year: number; n: number }[];
+    .all(...oj.params, hla) as { year: number; n: number }[];
   return densifyYears(rows);
 }
 
 /** Articles distincts mentionnant la complication, par annee (serie dense). */
-export function getOutcomeYearCounts(outcome: string): YearCount[] {
+export function getOutcomeYearCounts(
+  outcome: string,
+  organ: OrganSelection = ALL_ORGANS,
+): YearCount[] {
+  const oj = organJoin(organ, "om.pmid");
   const rows = getDb()
     .prepare(
       `SELECT ar.year AS year, COUNT(DISTINCT om.pmid) AS n
          FROM outcome_mentions om
          JOIN articles ar ON ar.pmid = om.pmid
+         ${oj.sql}
         WHERE om.outcome = ?
         GROUP BY ar.year`,
     )
-    .all(outcome) as { year: number; n: number }[];
+    .all(...oj.params, outcome) as { year: number; n: number }[];
   return densifyYears(rows);
 }
 
 /** Nombre d'articles distincts mentionnant un allele (0 si inconnu). */
-export function getAlleleArticleCount(hla: string): number {
+export function getAlleleArticleCount(
+  hla: string,
+  organ: OrganSelection = ALL_ORGANS,
+): number {
   const row = getDb()
-    .prepare(`SELECT COUNT(DISTINCT pmid) AS n FROM hla_mentions WHERE hla = ?`)
-    .get(hla) as { n: number };
-  return row.n;
+    .prepare(
+      `SELECT n_articles FROM hla_organ_counts WHERE organ = ? AND hla = ?`,
+    )
+    .get(organ, hla) as { n_articles: number } | undefined;
+  return row?.n_articles ?? 0;
 }
 
 /** Nombre d'articles distincts mentionnant une complication. */
-export function getOutcomeArticleCount(outcome: string): number {
+export function getOutcomeArticleCount(
+  outcome: string,
+  organ: OrganSelection = ALL_ORGANS,
+): number {
   const row = getDb()
     .prepare(
-      `SELECT COUNT(DISTINCT pmid) AS n FROM outcome_mentions WHERE outcome = ?`,
+      `SELECT n_articles FROM outcome_organ_counts
+        WHERE organ = ? AND outcome = ?`,
     )
-    .get(outcome) as { n: number };
-  return row.n;
+    .get(organ, outcome) as { n_articles: number } | undefined;
+  return row?.n_articles ?? 0;
 }
 
 /** Articles distincts par entite HLA, pour toutes les entites mentionnees. */
-export function getArticleCountsByHla(): Map<string, number> {
+export function getArticleCountsByHla(
+  organ: OrganSelection = ALL_ORGANS,
+): Map<string, number> {
   const rows = getDb()
-    .prepare(
-      `SELECT hla, COUNT(DISTINCT pmid) AS n FROM hla_mentions GROUP BY hla`,
-    )
-    .all() as { hla: string; n: number }[];
+    .prepare(`SELECT hla, n_articles AS n FROM hla_organ_counts WHERE organ = ?`)
+    .all(organ) as { hla: string; n: number }[];
   return new Map(rows.map((r) => [r.hla, r.n]));
 }
 
 /** Taille du referentiel de complications (calculee, jamais ecrite en dur). */
-export function getOutcomeCount(): number {
-  return (getDb().prepare(`SELECT COUNT(*) AS n FROM outcomes`).get() as { n: number }).n;
+export function getOutcomeCount(organ: OrganSelection = ALL_ORGANS): number {
+  if (organ === ALL_ORGANS) {
+    return (getDb().prepare(`SELECT COUNT(*) AS n FROM outcomes`).get() as { n: number }).n;
+  }
+  // Pour un organe : les complications qui s'y appliquent (vocabulaire).
+  return (
+    getDb()
+      .prepare(`SELECT COUNT(*) AS n FROM outcome_organs WHERE organ = ?`)
+      .get(organ) as { n: number }
+  ).n;
 }
 
 /** Toutes les entites HLA (154 lignes) — referentiel pour regrouper. */
@@ -1593,6 +1868,8 @@ export interface ArticleSummary {
   nNegated: number;
   /** Partenaires distincts (complications pour un allele, et inversement). */
   nPartners: number;
+  /** Organes de l'article, le principal en tete. */
+  organs: OrganKey[];
 }
 
 interface ArticleSummarySqlRow {
@@ -1617,8 +1894,10 @@ function topArticles(
   column: "hla" | "outcome",
   key: string,
   limit: number,
+  organ: OrganSelection = ALL_ORGANS,
 ): ArticleSummary[] {
   const partner = column === "hla" ? "outcome" : "hla";
+  const oj = organJoin(organ, "pm.pmid");
   const rows = getDb()
     .prepare(
       `WITH per_article AS (
@@ -1628,6 +1907,7 @@ function topArticles(
                   AS n_negated,
                 COUNT(DISTINCT pm.${partner}) AS n_partners
            FROM pair_mentions pm
+           ${oj.sql}
           WHERE pm.${column} = ?
           GROUP BY pm.pmid
        )
@@ -1646,7 +1926,8 @@ function topArticles(
                  ar.year DESC, ar.pmid ASC
         LIMIT ?`,
     )
-    .all(key, limit) as ArticleSummarySqlRow[];
+    .all(...oj.params, key, limit) as ArticleSummarySqlRow[];
+  const organMap = getOrganMap(rows.map((r) => r.pmid));
   return rows.map((row) => ({
     pmid: row.pmid,
     title: row.title,
@@ -1658,21 +1939,24 @@ function topArticles(
     nSentences: row.n_sentences,
     nNegated: row.n_negated,
     nPartners: row.n_partners,
+    organs: organMap.get(row.pmid) ?? [],
   }));
 }
 
 export function getTopArticlesForAllele(
   hla: string,
   limit = 8,
+  organ: OrganSelection = ALL_ORGANS,
 ): ArticleSummary[] {
-  return topArticles("hla", hla, limit);
+  return topArticles("hla", hla, limit, organ);
 }
 
 export function getTopArticlesForOutcome(
   outcome: string,
   limit = 8,
+  organ: OrganSelection = ALL_ORGANS,
 ): ArticleSummary[] {
-  return topArticles("outcome", outcome, limit);
+  return topArticles("outcome", outcome, limit, organ);
 }
 
 /** Entree du catalogue des alleles (page `/allele`). */
@@ -1689,8 +1973,10 @@ export interface AlleleCatalogEntry extends HlaEntity {
  * Catalogue complet des entites HLA avec leurs effectifs. Une requete par
  * agregat (mentions, associations), jointes en memoire : 154 lignes.
  */
-export function getAlleleCatalog(): AlleleCatalogEntry[] {
-  const articles = getArticleCountsByHla();
+export function getAlleleCatalog(
+  organ: OrganSelection = ALL_ORGANS,
+): AlleleCatalogEntry[] {
+  const articles = getArticleCountsByHla(organ);
   const assoc = new Map(
     (
       getDb()
@@ -1698,9 +1984,9 @@ export function getAlleleCatalog(): AlleleCatalogEntry[] {
           `SELECT hla, COUNT(*) AS n,
                   SUM(CASE WHEN signal_level <> 'weak' THEN 1 ELSE 0 END)
                     AS n_marked
-             FROM associations GROUP BY hla`,
+             FROM associations WHERE organ = ? GROUP BY hla`,
         )
-        .all() as { hla: string; n: number; n_marked: number }[]
+        .all(organ) as { hla: string; n: number; n_marked: number }[]
     ).map((r) => [r.hla, r]),
   );
   return getAllHlaEntities().map((entity) => ({
@@ -1720,6 +2006,11 @@ export interface TopAllele {
 
 /** Entree du catalogue des complications (page `/complication`). */
 export interface OutcomeCatalogEntry extends Outcome {
+  /**
+   * Vrai si la complication s'applique a l'organe selectionne (vocabulaire,
+   * `OUTCOME_ORGANS`) ; toujours vrai pour « tous les organes ».
+   */
+  relevant: boolean;
   nArticles: number;
   /** Alleles co-mentionnes au moins une fois. */
   nAlleles: number;
@@ -1736,7 +2027,10 @@ export interface OutcomeCatalogEntry extends Outcome {
  * alleliques (2-digit, 4-digit) sont proposees en tete : `HLA-mismatch`
  * n'est pas un allele et brouillerait la lecture d'une carte de synthese.
  */
-export function getOutcomeCatalog(topN = 3): OutcomeCatalogEntry[] {
+export function getOutcomeCatalog(
+  topN = 3,
+  organ: OrganSelection = ALL_ORGANS,
+): OutcomeCatalogEntry[] {
   const db = getDb();
   const categoryCase = `CASE o.category ${CATEGORIES.map(
     (c, i) => `WHEN '${c}' THEN ${i}`,
@@ -1744,28 +2038,36 @@ export function getOutcomeCatalog(topN = 3): OutcomeCatalogEntry[] {
 
   const outcomes = db
     .prepare(
-      `SELECT o.outcome, o.label, o.category, o.n_mentions,
-              (SELECT COUNT(DISTINCT om.pmid) FROM outcome_mentions om
-                WHERE om.outcome = o.outcome) AS n_articles,
+      `SELECT o.outcome, o.label, o.category,
+              COALESCE(c.n_mentions, 0) AS n_mentions,
+              COALESCE(c.n_articles, 0) AS n_articles,
               (SELECT COUNT(*) FROM associations a
-                WHERE a.outcome = o.outcome) AS n_alleles,
+                WHERE a.organ = ? AND a.outcome = o.outcome) AS n_alleles,
               (SELECT COUNT(*) FROM associations a
-                WHERE a.outcome = o.outcome AND a.signal_level <> 'weak')
-                AS n_marked
+                WHERE a.organ = ? AND a.outcome = o.outcome
+                  AND a.signal_level <> 'weak') AS n_marked,
+              CASE WHEN ? = 'all' THEN 1
+                   ELSE EXISTS (SELECT 1 FROM outcome_organs oo
+                                 WHERE oo.outcome = o.outcome AND oo.organ = ?)
+              END AS relevant
          FROM outcomes o
+         LEFT JOIN outcome_organ_counts c
+                ON c.outcome = o.outcome AND c.organ = ?
         ORDER BY ${categoryCase}, o.label ASC`,
     )
-    .all() as (OutcomeSqlRow & {
+    .all(organ, organ, organ, organ, organ) as (OutcomeSqlRow & {
     n_articles: number;
     n_alleles: number;
     n_marked: number;
+    relevant: number;
   })[];
 
   const topStmt = db.prepare(
     `SELECT a.hla, a.signal_level, a.n_cooccurrence
        FROM associations a
        JOIN hla_entities h ON h.hla = a.hla
-      WHERE a.outcome = ? AND h.resolution IN ('2-digit', '4-digit')
+      WHERE a.organ = ? AND a.outcome = ?
+        AND h.resolution IN ('2-digit', '4-digit')
         AND a.signal_level <> 'weak'
       ORDER BY ${SIGNAL_ORDER_SQL}, a.n_cooccurrence DESC, a.hla ASC
       LIMIT ?`,
@@ -1776,11 +2078,12 @@ export function getOutcomeCatalog(topN = 3): OutcomeCatalogEntry[] {
     label: row.label,
     category: row.category,
     nMentions: row.n_mentions,
+    relevant: row.relevant === 1,
     nArticles: row.n_articles,
     nAlleles: row.n_alleles,
     nMarked: row.n_marked,
     topAlleles: (
-      topStmt.all(row.outcome, topN) as {
+      topStmt.all(organ, row.outcome, topN) as {
         hla: string;
         signal_level: SignalLevel;
         n_cooccurrence: number;
@@ -1875,7 +2178,11 @@ export interface AuthorshipRoles {
  * Premier, dernier, intermediaire. Un article a auteur unique compte comme
  * « premier ».
  */
-export function getAuthorshipRoles(authorId: string): AuthorshipRoles {
+export function getAuthorshipRoles(
+  authorId: string,
+  organ: OrganSelection = ALL_ORGANS,
+): AuthorshipRoles {
+  const oj = organJoin(organ, "aa.pmid");
   const row = getDb()
     .prepare(
       `SELECT SUM(CASE WHEN aa.position = 1 THEN 1 ELSE 0 END) AS first,
@@ -1884,9 +2191,10 @@ export function getAuthorshipRoles(authorId: string): AuthorshipRoles {
               SUM(CASE WHEN aa.position <> 1 AND aa.is_last = 0
                        THEN 1 ELSE 0 END) AS middle
          FROM article_authors aa
+         ${oj.sql}
         WHERE aa.author_id = ?`,
     )
-    .get(authorId) as {
+    .get(...oj.params, authorId) as {
     first: number | null;
     last: number | null;
     middle: number | null;
@@ -1896,4 +2204,87 @@ export function getAuthorshipRoles(authorId: string): AuthorshipRoles {
     last: row.last ?? 0,
     middle: row.middle ?? 0,
   };
+}
+
+
+// ==========================================================================
+// ORGANES — AJOUT PUR, bloc delimite.
+//
+// Vocabulaire des organes et ventilations « Par organe ». Les comptes sont des
+// articles DISTINCTS par strate ; un article multi-organe figure dans chacune
+// de ses strates, si bien que la somme des organes depasse le total.
+// ==========================================================================
+
+interface OrganSqlRow {
+  organ: OrganKey;
+  label: string;
+  short_label: string;
+  slug: string;
+  n_articles: number;
+}
+
+/** Les organes du corpus avec leur nombre d'articles, dans l'ordre d'affichage. */
+export function getOrgans(): OrganInfo[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT organ, label, short_label, slug, n_articles
+           FROM organs ORDER BY sort_order ASC`,
+      )
+      .all() as OrganSqlRow[]
+  ).map((r) => ({
+    key: r.organ,
+    label: r.label,
+    shortLabel: r.short_label,
+    slug: r.slug,
+    nArticles: r.n_articles,
+  }));
+}
+
+/** Range des effectifs dans l'ordre d'affichage des organes, zeros compris. */
+export function orderedOrganCounts(rows: OrganCount[]): OrganCount[] {
+  const by = new Map(rows.map((r) => [r.organ, r.nArticles]));
+  return ORGAN_KEYS.map((organ) => ({ organ, nArticles: by.get(organ) ?? 0 }));
+}
+
+/** Articles distincts mentionnant l'allele, par organe (« Par organe »). */
+export function getAlleleOrganCounts(hla: string): OrganCount[] {
+  return orderedOrganCounts(
+    (
+      getDb()
+        .prepare(
+          `SELECT organ, n_articles FROM hla_organ_counts
+            WHERE hla = ? AND organ <> 'all'`,
+        )
+        .all(hla) as { organ: OrganKey; n_articles: number }[]
+    ).map((r) => ({ organ: r.organ, nArticles: r.n_articles })),
+  );
+}
+
+/** Articles distincts mentionnant la complication, par organe. */
+export function getOutcomeOrganCounts(outcome: string): OrganCount[] {
+  return orderedOrganCounts(
+    (
+      getDb()
+        .prepare(
+          `SELECT organ, n_articles FROM outcome_organ_counts
+            WHERE outcome = ? AND organ <> 'all'`,
+        )
+        .all(outcome) as { organ: OrganKey; n_articles: number }[]
+    ).map((r) => ({ organ: r.organ, nArticles: r.n_articles })),
+  );
+}
+
+/** Organes des articles d'une liste (une requete par article : listes courtes). */
+export function getOrganMap(pmids: readonly string[]): Map<string, OrganKey[]> {
+  const stmt = getDb().prepare(
+    `SELECT organ FROM article_organs WHERE pmid = ?
+      ORDER BY is_primary DESC, organ ASC`,
+  );
+  return new Map(
+    pmids.map((pmid) => [
+      pmid,
+      (stmt.all(pmid) as { organ: OrganKey }[]).map((r) => r.organ),
+    ]),
+  );
 }

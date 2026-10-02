@@ -5,7 +5,8 @@ import { AlleleName, CategoryBadge, cardClasses } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { SignalHighlight } from "@/lib/queries";
 import { SIGNAL_CLASSES } from "@/lib/theme";
-import { plural } from "./constellation";
+import { plural } from "@/components/landing/constellation";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 
 /**
  * « Signaux les plus marques » — vitrine de paires (allele, complication).
@@ -15,13 +16,19 @@ import { plural } from "./constellation";
  * brute (NPMI, OR, FDR) : elles restent derriere le depliant des fiches.
  * Toute la carte mene a la fiche, d'ou l'on ouvre les phrases sources.
  */
-export function SignalShowcase({ pairs }: { pairs: SignalHighlight[] }) {
+export function SignalShowcase({
+  pairs,
+  organ = ALL_ORGANS,
+}: {
+  pairs: SignalHighlight[];
+  organ?: OrganSelection;
+}) {
   return (
     <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {pairs.map((p) => (
         <li key={`${p.hla}|${p.outcome}`}>
           <Link
-            href={`/allele/${encodeURIComponent(p.hla)}`}
+            href={withOrgan(`/allele/${encodeURIComponent(p.hla)}`, organ)}
             className={cn(
               cardClasses({ interactive: true, padding: "none" }),
               "group flex h-full flex-col overflow-hidden",

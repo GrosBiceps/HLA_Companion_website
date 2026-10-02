@@ -118,77 +118,55 @@ describe("page d'accueil (rendu)", () => {
     return { container, text: container.textContent ?? "" };
   };
 
-  it("porte le cadrage epistemique avant le champ de recherche", () => {
+  it("porte la ligne de cadrage avant le champ de recherche", () => {
     const { container, text } = renderPage();
-    const notice = container.querySelector("#epistemic-notice-title");
-    expect(notice).not.toBeNull();
     expect(text).toMatch(/pas des associations cliniques ni causales/i);
-    expect(text).toMatch(/78,75/);
-    expect(text).toMatch(/0,44/);
-    // La ligne de cadrage du bandeau precede le champ de recherche.
-    const framing = text.search(/Pas des associations cliniques ni causales/);
+    const framing = [...container.querySelectorAll("strong")].find((s) =>
+      /Pas des associations cliniques/.test(s.textContent ?? ""),
+    );
     const search = container.querySelector("#search-input");
+    expect(framing).toBeDefined();
     expect(search).not.toBeNull();
-    const before = (search!.compareDocumentPosition(
-      [...container.querySelectorAll("strong")].find((s) =>
-        /Pas des associations cliniques/.test(s.textContent ?? ""),
-      )!,
-    ) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
-    expect(framing).toBeGreaterThan(-1);
-    expect(before).toBe(true);
+    expect(
+      (search!.compareDocumentPosition(framing!) & Node.DOCUMENT_POSITION_PRECEDING) !== 0,
+    ).toBe(true);
   });
 
-  it("rend les sections de l'accueil et les points d'entree principaux", () => {
+  it("ne contient que le bandeau d'ouverture et un seul bouton « En savoir plus »", () => {
+    const { container, text } = renderPage();
+    expect(container.querySelector("#recherche")).not.toBeNull();
+    expect(container.querySelectorAll("h1")).toHaveLength(1);
+    // Plus aucune des sections deplacees vers /presentation.
+    expect(container.querySelectorAll("h2")).toHaveLength(0);
+    for (const id of ["cadrage", "corpus", "signaux", "entrees", "contexte", "demarche-titre"]) {
+      expect(container.querySelector(`#${id}`), id).toBeNull();
+    }
+    expect(container.querySelector("#epistemic-notice-title")).toBeNull();
+    expect(container.querySelector('[data-testid="first-visit-hint"]')).toBeNull();
+    expect(text).not.toMatch(/Première visite/);
+    const buttons = [...container.querySelectorAll("a")].filter((a) =>
+      /En savoir plus/.test(a.textContent ?? ""),
+    );
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].getAttribute("href")).toBe("/presentation");
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("garde un texte neutre vis-a-vis de l'organe", () => {
     const { container } = renderPage();
-    for (const id of ["recherche", "corpus", "signaux", "entrees", "contexte"]) {
-      expect(container.querySelector(`#${id}`), id).not.toBeNull();
-    }
+    const hero = container.querySelector("h1")!.textContent ?? "";
+    expect(hero).not.toMatch(/rénale|rein/i);
+    expect(hero).toMatch(/complications de la greffe/);
+  });
+
+  it("garde les exemples cliquables et les liens vers /presentation", () => {
+    const { container } = renderPage();
     const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
-    for (const h of [
-      "/graph",
-      "/matrice",
-      "/allele",
-      "/complication",
-      "/methode",
-      "/carte-v1",
-      "/guide",
-    ]) {
-      expect(hrefs).toContain(h);
-    }
-    // Exemples cliquables sous le champ de recherche : allele, complication, auteur.
+    expect(hrefs).toContain("/presentation");
+    expect(hrefs).toContain("/presentation#cadrage");
     expect(hrefs).toContain(`/allele/${encodeURIComponent("HLA-DQB1*02:01")}`);
     expect(hrefs.some((h) => h?.startsWith("/complication/"))).toBe(true);
     expect(hrefs.some((h) => h?.startsWith("/auteur/"))).toBe(true);
-  });
-
-  it("l'explication longue est dans /guide : l'accueil n'en garde qu'un bandeau compact", () => {
-    const { container, text } = renderPage();
-    // Plus de section « Comment lire le site » ni de legende detaillee.
-    expect(container.querySelector("#lire")).toBeNull();
-    expect(text).not.toMatch(/De l.allèle aux phrases sources, en deux clics/);
-    expect(container.querySelector("dl")).toBeNull();
-    // Bandeau 1-2-3 et bouton vers le guide complet.
-    const steps = container.querySelector("#demarche-titre")?.closest("section");
-    expect(steps).not.toBeNull();
-    expect(steps!.querySelectorAll("ol > li")).toHaveLength(3);
-    const guide = [...steps!.querySelectorAll("a")].find(
-      (a) => a.getAttribute("href") === "/guide",
-    );
-    expect(guide?.textContent).toMatch(/Ouvrir le guide complet/);
-    // Legende compacte : les cinq niveaux restent nommes.
-    for (const label of ["fort", "net", "modéré", "faible", "inverse"]) {
-      expect(steps!.textContent).toContain(`Signal ${label}`);
-    }
-  });
-
-  it("propose les quatre portes « Par où commencer ? »", () => {
-    const { container } = renderPage();
-    const entrees = container.querySelector("#entrees")!;
-    expect(entrees.textContent).toMatch(/Par où commencer/);
-    const hrefs = [...entrees.querySelectorAll("a")].map((a) => a.getAttribute("href"));
-    for (const h of ["/allele", "/complication", "/matrice", "/graph"]) {
-      expect(hrefs).toContain(h);
-    }
   });
 
   it("n'affiche aucune metrique brute d'association", () => {

@@ -37,7 +37,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from labels import OUTCOME_LABELS, compute_signal_level
+from labels import (
+    ALL_ORGANS,
+    CATEGORIES,
+    OUTCOME_LABELS,
+    OUTCOME_ORGANS,
+    ORGANS,
+    compute_signal_level,
+)
 
 MIN_YEAR = 1960
 MAX_YEAR = datetime.now(timezone.utc).year
@@ -54,6 +61,9 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 # donnees reelles ne doit pas dependre de lui.
 DEFAULT_REFERENCE_DIR = Path(__file__).resolve().parent.parent / "data" / "reference"
 SEROTYPES_FILE = "hla_serotypes.csv"
+
+# Organes : `{cle: (libelle, libelle court, slug)}`. Source : labels.py.
+ORGAN_META = {key: (label, short, slug) for key, label, short, slug in ORGANS}
 
 SEROTYPE_LOCI = ("A", "B", "C", "DR", "DQ", "DP")
 SEROTYPE_KINDS = ("specific", "broad", "associated", "cellular")
@@ -95,15 +105,25 @@ def _text(value):
 
 
 def read_sources(source_dir):
-    """Charge les cinq CSV sources en memoire, sans aucune validation."""
+    """Charge les CSV sources en memoire (cinq obligatoires, `organs.csv`
+    optionnel), sans aucune validation."""
     src = Path(source_dir)
+    organs_path = src / "organs.csv"
     return {
         "articles": _read_csv(src / "articles.csv"),
         "authors": _read_csv(src / "authors.csv"),
         "hla_entities": _read_csv(src / "hla_entities.csv"),
         "pair_mentions": _read_csv(src / "pair_mentions.csv"),
         "associations": _read_csv(src / "associations.csv"),
+        # Liste DECLAREE des organes du corpus (optionnelle) : si elle est
+        # absente, les organes sont deduits des articles.
+        "organs": _read_csv(organs_path) if organs_path.exists() else None,
     }
+
+
+def article_organs(row):
+    """Organes d'un article : colonne `organs`, cles separees par « ; »."""
+    return [o.strip() for o in (row.get("organs") or "").split(";") if o.strip()]
 
 
 def read_serotype_reference(reference_dir):
@@ -142,10 +162,25 @@ def author_slug(name):
 # VALIDATIONS (§8) — toutes bloquantes, message prefixe par le code
 # =====================================================================
 
-def validate(data, n_articles_declared):
-    """Execute les 8 validations. Leve ValidationError au premier echec.
+def validate(data, n_articles_declared, allow_off_organ_outcomes=False):
+    """Execute les validations V1-V8 et V11-V16. Leve ValidationError au
+    premier echec.
 
     Appelee AVANT toute ecriture : un echec ne laisse aucun fichier.
+
+    Validations ajoutees avec la stratification par organe (cf. docs/ORGANES.md) :
+
+    * V11 : chaque article a au moins un organe, et tout organe est connu ;
+    * V12 : chaque organe declare a au moins un article ;
+    * V13 : chaque association porte une strate connue (`all` ou un organe),
+      sans doublon (strate, allele, complication) ;
+    * V3 (par strate) : n_cooccurrence == mentions de la paire dans la strate ;
+    * V14 : denominateurs de strate coherents (`n_universe` == articles de la
+      strate) et marges reconstructibles (n_hla_total, n_outcome_total) ;
+    * V15 : sommes plausibles (une strate d'organe ne depasse jamais `all`,
+      `all` ne depasse jamais la somme des strates d'organe) ;
+    * V16 : chaque complication mentionnee s'applique a un organe de son
+      article (desactivable par `allow_off_organ_outcomes`).
     """
     articles = data["articles"]
     authors = data["authors"]
@@ -181,6 +216,10 @@ def validate(data, n_articles_declared):
         if not label or not category:
             raise ValidationError(
                 f"V8: outcome '{outcome}' sans libelle ou sans categorie"
+            )
+        if category not in CATEGORIES:
+            raise ValidationError(
+                f"V8: outcome '{outcome}' : categorie inconnue '{category}'"
             )
 
     # --- V2 : toute FK referencee existe -------------------------------
@@ -241,57 +280,187 @@ def validate(data, n_articles_declared):
                 f"(attendu dans [{MIN_YEAR}, {MAX_YEAR}])"
             )
 
-    # --- V3 / V4 / V6 : coherence des agregats --------------------------
-    observed = Counter((r["hla"], r["outcome"]) for r in mentions)
-    seen_pairs = set()
-    for r in assocs:
-        key = (r["hla"], r["outcome"])
-        if key in seen_pairs:
+    # --- V11 / V12 : organes ---------------------------------------------
+    organs_of = {}
+    for r in articles:
+        organs = article_organs(r)
+        if not organs:
             raise ValidationError(
-                f"V1: paire dupliquee dans associations.csv {key}"
+                f"V11: l'article '{r['pmid']}' n'a aucun organe (colonne organs)"
             )
-        seen_pairs.add(key)
+        for organ in organs:
+            if organ not in ORGAN_META:
+                raise ValidationError(
+                    f"V11: l'article '{r['pmid']}' reference l'organe inconnu "
+                    f"'{organ}'"
+                )
+        if len(set(organs)) != len(organs):
+            raise ValidationError(
+                f"V11: l'article '{r['pmid']}' repete un organe : {organs}"
+            )
+        organs_of[r["pmid"]] = organs
+
+    declared = declared_organs(data)
+    for organ in declared:
+        if organ not in ORGAN_META:
+            raise ValidationError(f"V11: organe declare inconnu '{organ}'")
+    universe = Counter({ALL_ORGANS: len(articles)})
+    for organs in organs_of.values():
+        for organ in organs:
+            universe[organ] += 1
+    for organ in declared:
+        if universe[organ] == 0:
+            raise ValidationError(f"V12: l'organe '{organ}' n'a aucun article")
+    for organ in universe:
+        if organ != ALL_ORGANS and organ not in declared:
+            raise ValidationError(
+                f"V11: des articles portent l'organe '{organ}', absent de organs.csv"
+            )
+
+    # --- V16 : une complication s'applique a un organe de son article ------
+    off_organ = []
+    for r in mentions:
+        if not any(o in OUTCOME_ORGANS.get(r["outcome"], ()) for o in organs_of[r["pmid"]]):
+            off_organ.append((r["pmid"], r["outcome"]))
+    if off_organ and not allow_off_organ_outcomes:
+        raise ValidationError(
+            f"V16: {len(off_organ)} mentions de complications hors du champ des "
+            f"organes de leur article, ex. {off_organ[0]}"
+        )
+
+    # --- Strates : comptages reels depuis les pair_mentions ----------------
+    strata = [ALL_ORGANS] + sorted(declared)
+    pair_n = {st: Counter() for st in strata}
+    hla_arts = {st: defaultdict(set) for st in strata}
+    out_arts = {st: defaultdict(set) for st in strata}
+    for r in mentions:
+        key = (r["hla"], r["outcome"])
+        for st in [ALL_ORGANS] + organs_of[r["pmid"]]:
+            pair_n[st][key] += 1
+            hla_arts[st][r["hla"]].add(r["pmid"])
+            out_arts[st][r["outcome"]].add(r["pmid"])
+
+    # --- V13 / V3 / V4 / V6 / V14 : coherence des agregats par strate -----
+    seen = set()
+    seen_by_stratum = {st: set() for st in strata}
+    for r in assocs:
+        stratum = (r.get("organ") or "").strip()
+        if stratum not in seen_by_stratum:
+            raise ValidationError(
+                f"V13: association de strate inconnue '{stratum}' "
+                f"(attendu : '{ALL_ORGANS}' ou un organe declare)"
+            )
+        key = (r["hla"], r["outcome"])
+        if (stratum, key) in seen:
+            raise ValidationError(
+                f"V1: paire dupliquee dans associations.csv {(stratum,) + key}"
+            )
+        seen.add((stratum, key))
+        seen_by_stratum[stratum].add(key)
 
         n_co = _int(r.get("n_cooccurrence"))
         n_pos = _int(r.get("n_positive"))
         n_neg = _int(r.get("n_negated"))
 
-        # V3
-        actual = observed.get(key, 0)
+        # V3, dans la strate
+        actual = pair_n[stratum].get(key, 0)
         if n_co != actual:
             raise ValidationError(
-                f"V3: {key} declare n_cooccurrence={n_co} mais "
-                f"{actual} pair_mentions existent"
+                f"V3: {stratum}/{key} declare n_cooccurrence={n_co} mais "
+                f"{actual} pair_mentions existent dans la strate"
             )
 
         # V4
         if n_pos is None or n_neg is None or n_pos + n_neg != n_co:
             raise ValidationError(
-                f"V4: {key} n_positive({n_pos}) + n_negated({n_neg}) "
+                f"V4: {stratum}/{key} n_positive({n_pos}) + n_negated({n_neg}) "
                 f"!= n_cooccurrence({n_co})"
+            )
+
+        # V14 : denominateur de strate et marges
+        n_universe = _int(r.get("n_universe"))
+        if n_universe != universe[stratum]:
+            raise ValidationError(
+                f"V14: {stratum}/{key} declare n_universe={n_universe} mais la "
+                f"strate compte {universe[stratum]} articles"
+            )
+        n_hla = _int(r.get("n_hla_total"))
+        n_out = _int(r.get("n_outcome_total"))
+        if n_hla != len(hla_arts[stratum][r["hla"]]):
+            raise ValidationError(
+                f"V14: {stratum}/{key} declare n_hla_total={n_hla} mais "
+                f"{len(hla_arts[stratum][r['hla']])} articles de la strate "
+                f"citent cet allele"
+            )
+        if n_out != len(out_arts[stratum][r["outcome"]]):
+            raise ValidationError(
+                f"V14: {stratum}/{key} declare n_outcome_total={n_out} mais "
+                f"{len(out_arts[stratum][r['outcome']])} articles de la strate "
+                f"citent cette complication"
+            )
+        if n_hla > n_universe or n_out > n_universe:
+            raise ValidationError(
+                f"V14: {stratum}/{key} : une marge depasse le denominateur "
+                f"de la strate ({n_hla}, {n_out} > {n_universe})"
             )
 
         # V6
         npmi = _float(r.get("npmi"))
         if npmi is not None and not (-1.0 <= npmi <= 1.0):
             raise ValidationError(
-                f"V6: {key} npmi={npmi} hors de [-1, 1]"
+                f"V6: {stratum}/{key} npmi={npmi} hors de [-1, 1]"
             )
         for field in ("fdr", "fdr_two_sided"):
             value = _float(r.get(field))
             if value is not None and not (0.0 <= value <= 1.0):
                 raise ValidationError(
-                    f"V6: {key} {field}={value} hors de [0, 1]"
+                    f"V6: {stratum}/{key} {field}={value} hors de [0, 1]"
                 )
 
-    # Toute paire observee doit etre agregee : sinon un chiffre affichable
-    # existerait sans ligne d'association pour le tracer.
-    missing = sorted(set(observed) - seen_pairs)
-    if missing:
+    # Toute paire observee doit etre agregee, dans chaque strate : sinon un
+    # chiffre affichable existerait sans ligne d'association pour le tracer.
+    for st in strata:
+        missing = sorted(set(pair_n[st]) - seen_by_stratum[st])
+        if missing:
+            raise ValidationError(
+                f"V3: {len(missing)} paires mentionnees sans ligne d'association "
+                f"dans la strate '{st}', ex. {missing[0]}"
+            )
+
+    # --- V15 : sommes plausibles ------------------------------------------
+    if universe[ALL_ORGANS] != len(articles):
+        raise ValidationError("V15: denominateur 'all' != nombre d'articles")
+    organ_total = sum(universe[o] for o in declared)
+    if organ_total < universe[ALL_ORGANS]:
         raise ValidationError(
-            f"V3: {len(missing)} paires mentionnees sans ligne d'association, "
-            f"ex. {missing[0]}"
+            f"V15: la somme des articles par organe ({organ_total}) est "
+            f"inferieure au nombre d'articles ({universe[ALL_ORGANS]}) : un "
+            f"article au moins n'est dans aucune strate"
         )
+    for organ in declared:
+        if universe[organ] > universe[ALL_ORGANS]:
+            raise ValidationError(f"V15: la strate '{organ}' depasse 'all'")
+    for key, n_all in pair_n[ALL_ORGANS].items():
+        parts = [pair_n[o].get(key, 0) for o in declared]
+        if sum(parts) < n_all or max(parts) > n_all:
+            raise ValidationError(
+                f"V15: somme des strates incoherente pour {key} : all={n_all}, "
+                f"organes={parts}"
+            )
+
+
+def declared_organs(data):
+    """Organes du corpus : `organs.csv` s'il existe, sinon ceux des articles."""
+    if data.get("organs") is not None:
+        return [r["organ"].strip() for r in data["organs"]]
+    seen = []
+    for r in data["articles"]:
+        for organ in article_organs(r):
+            if organ not in seen:
+                seen.append(organ)
+    return [key for key, *_ in ORGANS if key in seen] + [
+        o for o in seen if o not in ORGAN_META
+    ]
 
 
 # =====================================================================
@@ -465,7 +634,19 @@ def _populate(con, data, version, universe, is_synthetic, notes, built_at,
         data["pair_mentions"],
         key=lambda r: (r["pmid"], r["hla"], r["outcome"], _int(r["sentence_idx"], 0)),
     )
-    assocs = sorted(data["associations"], key=lambda r: (r["hla"], r["outcome"]))
+    declared = declared_organs(data)
+    # La strate `all` d'abord, puis les organes dans l'ordre du vocabulaire.
+    stratum_rank = {ALL_ORGANS: 0}
+    for i, organ in enumerate(
+        [k for k, *_ in ORGANS if k in declared]
+        + [o for o in declared if o not in ORGAN_META]
+    ):
+        stratum_rank[organ] = i + 1
+    assocs = sorted(
+        data["associations"],
+        key=lambda r: (stratum_rank[r["organ"].strip()], r["hla"], r["outcome"]),
+    )
+    organs_of = {r["pmid"]: article_organs(r) for r in articles}
 
     # --- corpus_version -------------------------------------------------
     con.execute(
@@ -493,6 +674,27 @@ def _populate(con, data, version, universe, is_synthetic, notes, built_at,
                 _text(r.get("graft_assignment")),
             )
             for r in articles
+        ],
+    )
+
+    # --- organs / article_organs ----------------------------------------
+    n_by_organ = Counter(o for organs in organs_of.values() for o in organs)
+    ordered_organs = [k for k, *_ in ORGANS if k in declared]
+    ordered_organs += [o for o in declared if o not in ORGAN_META]
+    con.executemany(
+        "INSERT INTO organs (organ, label, short_label, slug, sort_order, "
+        "n_articles) VALUES (?,?,?,?,?,?)",
+        [
+            (organ, *ORGAN_META[organ], i, n_by_organ[organ])
+            for i, organ in enumerate(ordered_organs)
+        ],
+    )
+    con.executemany(
+        "INSERT INTO article_organs (pmid, organ, is_primary) VALUES (?,?,?)",
+        [
+            (pmid, organ, 1 if i == 0 else 0)
+            for pmid in sorted(organs_of)
+            for i, organ in enumerate(organs_of[pmid])
         ],
     )
 
@@ -547,6 +749,16 @@ def _populate(con, data, version, universe, is_synthetic, notes, built_at,
                 outcome_mention_counts.get(outcome, 0),
             )
             for outcome in present
+        ],
+    )
+
+    con.executemany(
+        "INSERT INTO outcome_organs (outcome, organ) VALUES (?,?)",
+        [
+            (outcome, organ)
+            for outcome in present
+            for organ in ordered_organs
+            if organ in OUTCOME_ORGANS.get(outcome, ())
         ],
     )
 
@@ -640,7 +852,7 @@ def _populate(con, data, version, universe, is_synthetic, notes, built_at,
         signal_level = compute_signal_level(n_co, fdr, odds_ratio, fdr_two_sided)
         is_significant = 1 if signal_level != "weak" else 0
         assoc_rows.append((
-            r["hla"], r["outcome"], n_co, _int(r.get("n_positive")),
+            r["organ"].strip(), r["hla"], r["outcome"], n_co, _int(r.get("n_positive")),
             _int(r.get("n_negated")), _int(r.get("n_hla_total")),
             _int(r.get("n_outcome_total")), _int(r.get("n_universe")),
             _float(r.get("pmi")), _float(r.get("npmi")), _float(r.get("log_odds")),
@@ -650,29 +862,56 @@ def _populate(con, data, version, universe, is_synthetic, notes, built_at,
             signal_level, is_significant,
         ))
     con.executemany(
-        "INSERT INTO associations (hla, outcome, n_cooccurrence, n_positive, "
-        "n_negated, n_hla_total, n_outcome_total, n_universe, pmi, npmi, "
-        "log_odds, odds_ratio, or_ci_low, or_ci_high, pval_fisher, fdr, "
+        "INSERT INTO associations (organ, hla, outcome, n_cooccurrence, "
+        "n_positive, n_negated, n_hla_total, n_outcome_total, n_universe, pmi, "
+        "npmi, log_odds, odds_ratio, or_ci_low, or_ci_high, pval_fisher, fdr, "
         "pval_two_sided, fdr_two_sided, npmi_geo, first_year, signal_level, "
-        "is_significant) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "is_significant) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         assoc_rows,
     )
 
-    # --- association_timeline -------------------------------------------
+    # --- association_timeline / annual_counts / comptages par strate -----
     year_of = {r["pmid"]: _int(r.get("year")) for r in articles}
-    timeline = Counter(
-        (r["hla"], r["outcome"], year_of[r["pmid"]]) for r in mentions
+    timeline = Counter()
+    hla_n = Counter()
+    hla_pmids = defaultdict(set)
+    out_n = Counter()
+    out_pmids = defaultdict(set)
+    for r in mentions:
+        y = year_of[r["pmid"]]
+        for st in [ALL_ORGANS] + organs_of[r["pmid"]]:
+            timeline[(st, r["hla"], r["outcome"], y)] += 1
+            hla_n[(st, r["hla"])] += 1
+            hla_pmids[(st, r["hla"])].add(r["pmid"])
+            out_n[(st, r["outcome"])] += 1
+            out_pmids[(st, r["outcome"])].add(r["pmid"])
+
+    def stratum_key(item):
+        return (stratum_rank[item[0]],) + tuple(item[1:])
+
+    con.executemany(
+        "INSERT INTO association_timeline (organ, hla, outcome, year, n) "
+        "VALUES (?,?,?,?,?)",
+        [(*k, timeline[k]) for k in sorted(timeline, key=stratum_key)],
     )
     con.executemany(
-        "INSERT INTO association_timeline (hla, outcome, year, n) VALUES (?,?,?,?)",
-        [(h, o, y, timeline[(h, o, y)]) for h, o, y in sorted(timeline)],
+        "INSERT INTO hla_organ_counts (organ, hla, n_articles, n_mentions) "
+        "VALUES (?,?,?,?)",
+        [(*k, len(hla_pmids[k]), hla_n[k]) for k in sorted(hla_n, key=stratum_key)],
+    )
+    con.executemany(
+        "INSERT INTO outcome_organ_counts (organ, outcome, n_articles, n_mentions) "
+        "VALUES (?,?,?,?)",
+        [(*k, len(out_pmids[k]), out_n[k]) for k in sorted(out_n, key=stratum_key)],
     )
 
-    # --- annual_counts ---------------------------------------------------
-    annual = Counter(year_of[r["pmid"]] for r in articles)
+    annual = Counter()
+    for r in articles:
+        for st in [ALL_ORGANS] + organs_of[r["pmid"]]:
+            annual[(st, year_of[r["pmid"]])] += 1
     con.executemany(
-        "INSERT INTO annual_counts (year, n) VALUES (?,?)",
-        [(y, annual[y]) for y in sorted(annual)],
+        "INSERT INTO annual_counts (organ, year, n) VALUES (?,?,?)",
+        [(st, y, annual[(st, y)]) for st, y in sorted(annual, key=stratum_key)],
     )
 
     _populate_search_index(con, articles, ordered, by_id, present, display_of,
@@ -734,7 +973,8 @@ def _populate_search_index(con, articles, hla_ordered, hla_by_id, outcomes,
 
 def build(source_dir, out_path, version, universe="A", is_synthetic=False,
           notes=None, built_at=DEFAULT_BUILT_AT,
-          reference_dir=DEFAULT_REFERENCE_DIR, strict_serotypes=False):
+          reference_dir=DEFAULT_REFERENCE_DIR, strict_serotypes=False,
+          allow_off_organ_outcomes=False):
     """Construit la base scellee et retourne son SHA-256 hexadecimal.
 
     `built_at` est un parametre a valeur par defaut STABLE : deux builds des
@@ -748,7 +988,8 @@ def build(source_dir, out_path, version, universe="A", is_synthetic=False,
     data = read_sources(source_dir)
 
     # 1-2. Valider AVANT toute ecriture.
-    validate(data, n_articles_declared=len(data["articles"]))
+    validate(data, n_articles_declared=len(data["articles"]),
+             allow_off_organ_outcomes=allow_off_organ_outcomes)
     reference = read_serotype_reference(reference_dir)
     validate_serotype_reference(reference)
     serotypes, serotype_links, _ = project_serotypes(
@@ -818,6 +1059,9 @@ def main(argv=None):
     parser.add_argument("--strict-serotypes", action="store_true",
                         help="Echoue si un allele du referentiel serologique "
                              "est absent du corpus (V10) au lieu de l'ecarter.")
+    parser.add_argument("--allow-off-organ-outcomes", action="store_true",
+                        help="V16 : tolere des complications hors du champ des "
+                             "organes de leur article (donnees reelles bruitees).")
     parser.add_argument("--built-at", default=DEFAULT_BUILT_AT,
                         help="Horodatage ISO8601 stable ecrit dans la base.")
     args = parser.parse_args(argv)
@@ -833,6 +1077,7 @@ def main(argv=None):
             built_at=args.built_at,
             reference_dir=args.reference,
             strict_serotypes=args.strict_serotypes,
+            allow_off_organ_outcomes=args.allow_off_organ_outcomes,
         )
     except ValidationError as exc:
         print(f"ECHEC DE VALIDATION : {exc}", file=sys.stderr)

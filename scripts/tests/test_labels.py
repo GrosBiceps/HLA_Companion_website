@@ -4,15 +4,46 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from labels import OUTCOME_LABELS, CATEGORIES, compute_signal_level
+from labels import (
+    ALL_ORGANS,
+    CATEGORIES,
+    ORGANS,
+    ORGAN_KEYS,
+    OUTCOME_LABELS,
+    OUTCOME_ORGANS,
+    compute_signal_level,
+    outcomes_for_organ,
+)
+
+# Les 21 complications du corpus rein d'origine : elles ne changent pas.
+KIDNEY_ORIGINAL_21 = [
+    "ABMR", "TCMR", "acute_rejection", "chronic_rejection", "mixed_rejection",
+    "DSA", "sensitization", "complement_activation", "HLA_mismatch_outcome",
+    "DGF", "graft_loss", "graft_survival", "eGFR", "BK_nephropathy", "CMV",
+    "PTLD", "skin_cancer", "NODAT", "recurrent_GN", "FSGS", "IgA_nephropathy",
+]
 
 
 class TestLabels(unittest.TestCase):
-    def test_exactly_21_outcomes(self):
-        self.assertEqual(len(OUTCOME_LABELS), 21)
+    def test_outcome_vocabulary_size(self):
+        # 21 complications du rein + 25 propres aux autres organes ou partagees.
+        self.assertEqual(len(OUTCOME_LABELS), 46)
 
-    def test_exactly_7_categories(self):
-        self.assertEqual(len(CATEGORIES), 7)
+    def test_the_original_21_kidney_outcomes_are_kept_verbatim(self):
+        for key in KIDNEY_ORIGINAL_21:
+            self.assertIn(key, OUTCOME_LABELS)
+            self.assertIn("kidney", OUTCOME_ORGANS[key], key)
+        self.assertEqual(
+            OUTCOME_LABELS["FSGS"],
+            ("Hyalinose segmentaire et focale (HSF)", "Recidive"),
+        )
+
+    def test_exactly_9_categories(self):
+        self.assertEqual(len(CATEGORIES), 9)
+        self.assertEqual(CATEGORIES[:7], [
+            "Rejet", "Immunisation", "Fonction du greffon", "Infection",
+            "Neoplasie", "Metabolique", "Recidive",
+        ])
 
     def test_every_outcome_has_label_and_known_category(self):
         for key, (label, category) in OUTCOME_LABELS.items():
@@ -34,6 +65,56 @@ class TestLabels(unittest.TestCase):
         self.assertEqual(
             OUTCOME_LABELS["graft_loss"], ("Perte du greffon", "Fonction du greffon")
         )
+
+
+class TestOrganVocabulary(unittest.TestCase):
+    def test_seven_organs_with_stable_keys_and_french_labels(self):
+        self.assertEqual(
+            ORGAN_KEYS,
+            ["kidney", "liver", "heart", "lung", "hsct", "pancreas", "intestine"],
+        )
+        self.assertNotIn(ALL_ORGANS, ORGAN_KEYS)
+        labels = {key: label for key, label, _, _ in ORGANS}
+        self.assertEqual(labels["heart"], "Cœur")
+        self.assertIn("GCSH", labels["hsct"])
+        self.assertIn("hématopoïétiques", labels["hsct"])
+
+    def test_slugs_are_unique_ascii_and_not_keys_in_disguise(self):
+        slugs = [slug for _, _, _, slug in ORGANS]
+        self.assertEqual(len(slugs), len(set(slugs)))
+        for slug in slugs:
+            self.assertRegex(slug, r"^[a-z]+$")
+        self.assertEqual(
+            dict((k, s) for k, _, _, s in ORGANS)["heart"], "coeur"
+        )
+
+    def test_every_outcome_has_organs_and_only_known_ones(self):
+        self.assertEqual(set(OUTCOME_ORGANS), set(OUTCOME_LABELS))
+        for key, organs in OUTCOME_ORGANS.items():
+            self.assertTrue(organs, f"{key}: aucun organe")
+            for organ in organs:
+                self.assertIn(organ, ORGAN_KEYS, f"{key}: organe {organ} inconnu")
+            self.assertEqual(len(organs), len(set(organs)))
+
+    def test_every_organ_has_a_workable_outcome_list(self):
+        for organ in ORGAN_KEYS:
+            self.assertGreaterEqual(len(outcomes_for_organ(organ)), 12, organ)
+        self.assertEqual(len(outcomes_for_organ("kidney")), 23)
+
+    def test_organ_specific_outcomes_are_not_shared_by_accident(self):
+        self.assertEqual(OUTCOME_ORGANS["cardiac_allograft_vasculopathy"], ("heart",))
+        self.assertEqual(OUTCOME_ORGANS["bronchiolitis_obliterans"], ("lung",))
+        self.assertEqual(OUTCOME_ORGANS["chronic_gvhd"], ("hsct",))
+        self.assertNotIn("kidney", OUTCOME_ORGANS["acute_gvhd"])
+        # Les complications partagees couvrent tous les organes.
+        for key in ("DSA", "CMV", "PTLD", "patient_mortality", "HLA_mismatch_outcome"):
+            self.assertEqual(set(OUTCOME_ORGANS[key]), set(ORGAN_KEYS), key)
+
+    def test_labels_never_use_causal_wording(self):
+        causal = ("associé à", "associée à", "lié à", "liée à", "liés à", "risque de", "provoque", "entraîne", "prédit", "responsable de")
+        for key, (label, _) in OUTCOME_LABELS.items():
+            for term in causal:
+                self.assertNotIn(term, label.lower(), key)
 
 
 class TestSignalLevel(unittest.TestCase):

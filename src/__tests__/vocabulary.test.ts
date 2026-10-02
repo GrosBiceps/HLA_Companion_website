@@ -20,6 +20,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { OUTCOME_LABELS } from "../lib/labels";
+import { ORGANS } from "../lib/organ";
 
 /**
  * Formulations causales proscrites (spec §6). Comparaison en minuscules.
@@ -57,8 +58,14 @@ const FORBIDDEN_PHRASES = [
   " causent ",
 ];
 
-/** Cles techniques du pipeline : les 21 entrees de OUTCOME_LABELS. */
+/** Cles techniques du pipeline : les entrees de OUTCOME_LABELS (46). */
 const RAW_KEYS = Object.keys(OUTCOME_LABELS);
+
+/**
+ * Cles d'organes (`kidney`, `hsct`…) : stockees en base, jamais affichees —
+ * l'ecran passe par le libelle francais, l'URL par le slug.
+ */
+const ORGAN_RAW_KEYS = ORGANS.map((o) => o.key as string);
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -133,7 +140,7 @@ describe("garde-fou vocabulaire", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("aucune des 21 cles techniques affichee en dur", () => {
+  it("aucune des cles techniques de complication affichee en dur", () => {
     const offenders: string[] = [];
     for (const f of files) {
       // labels.ts EST la table de correspondance : les cles y sont des cles
@@ -147,8 +154,28 @@ describe("garde-fou vocabulaire", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("couvre bien les 21 cles du pipeline, pas seulement les exemples", () => {
-    expect(RAW_KEYS.length).toBe(21);
+  it("couvre bien toutes les cles du pipeline (46), pas seulement les exemples", () => {
+    expect(RAW_KEYS.length).toBe(46);
+    // Les 21 cles du corpus rein d'origine y sont toujours.
+    for (const key of ["ABMR", "TCMR", "graft_loss", "recurrent_GN", "IgA_nephropathy"]) {
+      expect(RAW_KEYS).toContain(key);
+    }
+  });
+
+  it("aucune cle d'organe (kidney, heart, hsct…) affichee en dur", () => {
+    const offenders: string[] = [];
+    for (const f of files) {
+      // organ.ts / labels.ts / theme.ts : tables de correspondance (les cles y
+      // sont des cles d'objet, jamais du texte visible).
+      if (/\/(organ|labels|theme)\.ts$/.test(f.replace(/\\/g, "/"))) continue;
+      const text = visibleText(readFileSync(f, "utf-8"));
+      for (const key of ORGAN_RAW_KEYS) {
+        // Mot entier : « heart » ne doit pas se lire dans « hearts », mais
+        // surtout pas dans un autre mot francais.
+        if (new RegExp(`\\b${key}\\b`).test(text)) offenders.push(`${rel(f)}: "${key}"`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
 

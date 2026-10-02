@@ -4,10 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { OUTCOME_LABELS } from "../lib/labels";
 import { NAV_ITEMS } from "../components/shell/nav";
-import {
-  FIRST_VISIT_KEY,
-  FirstVisitHint,
-} from "../components/landing/FirstVisitHint";
 
 // Les liens du guide passent par next/link (aucun routeur requis en rendu).
 const { default: GuidePage } = await import("../app/guide/page");
@@ -161,61 +157,5 @@ describe("page /guide (rendu)", () => {
     for (const key of Object.keys(OUTCOME_LABELS).filter((k) => k.includes("_"))) {
       expect(text).not.toContain(key);
     }
-  });
-});
-
-describe("FirstVisitHint (rappel de premiere visite)", () => {
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-    window.localStorage.clear();
-  });
-
-  it("s'affiche a la premiere visite et mene au guide", async () => {
-    window.localStorage.clear();
-    await act(async () => {
-      render(<FirstVisitHint />);
-    });
-    const hint = screen.getByTestId("first-visit-hint");
-    expect(hint.textContent).toMatch(/Première visite/);
-    expect(hint.querySelector('a[href="/guide"]')).not.toBeNull();
-  });
-
-  it("n'affiche rien au premier rendu (pas d'ecart d'hydratation)", async () => {
-    // @ts-expect-error -- react-dom/server n'a pas de types dans ce depot.
-    const { renderToString } = await import("react-dom/server");
-    expect(renderToString(<FirstVisitHint />)).toBe("");
-  });
-
-  it("se ferme et memorise le refus", async () => {
-    await act(async () => {
-      render(<FirstVisitHint />);
-    });
-    fireEvent.click(screen.getByRole("button", { name: /fermer/i }));
-    expect(screen.queryByTestId("first-visit-hint")).toBeNull();
-    expect(window.localStorage.getItem(FIRST_VISIT_KEY)).toBe("1");
-  });
-
-  it("ne reapparait pas une fois ferme", async () => {
-    window.localStorage.setItem(FIRST_VISIT_KEY, "1");
-    await act(async () => {
-      render(<FirstVisitHint />);
-    });
-    expect(screen.queryByTestId("first-visit-hint")).toBeNull();
-  });
-
-  it("fonctionne sans stockage (acces leve une exception)", async () => {
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("blocked");
-    });
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("blocked");
-    });
-    await act(async () => {
-      render(<FirstVisitHint />);
-    });
-    expect(screen.getByTestId("first-visit-hint")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /fermer/i }));
-    expect(screen.queryByTestId("first-visit-hint")).toBeNull();
   });
 });

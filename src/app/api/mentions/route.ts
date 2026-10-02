@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPairMentions } from "@/lib/queries";
+import { ORGAN_PARAM, parseOrganParam } from "@/lib/organ";
 
 /**
  * Phrases sources d'une paire (allele, complication) — le pont entre le
@@ -28,7 +29,9 @@ export function GET(request: NextRequest) {
   }
 
   try {
-    return NextResponse.json({ mentions: getPairMentions(hla, outcome) });
+    // `?organe=coeur` : seules les phrases des articles de l'organe.
+    const organ = parseOrganParam(params.get(ORGAN_PARAM));
+    return NextResponse.json({ mentions: getPairMentions(hla, outcome, organ) });
   } catch (error) {
     console.error("Echec de la lecture des mentions :", error);
     return NextResponse.json(

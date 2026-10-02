@@ -3,6 +3,8 @@ import { getCorpusVersion } from "@/lib/db";
 import { getCorpusStats } from "@/lib/queries";
 import { EpistemicNotice } from "@/components/EpistemicNotice";
 import { SearchBar } from "@/components/SearchBar";
+import { PageHeader, Section, StatTile, cardClasses } from "@/components/ui";
+import { ArrowRight, CalendarRange, Dna, FileText, Network, Stethoscope } from "lucide-react";
 
 /** Allele vitrine de la demonstration. */
 const SHOWCASE_ALLELE = "HLA-DQB1*02:01";
@@ -21,43 +23,44 @@ function formatBuiltAt(builtAt: string): string {
   }).format(date);
 }
 
-function StatCard({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
-      <p className="text-xl font-bold text-slate-900">{value}</p>
-      <p className="mt-0.5 text-xs uppercase tracking-wide text-slate-600">
-        {label}
-      </p>
-    </div>
-  );
-}
-
 function EntryCard({
   href,
+  eyebrow,
   title,
   description,
-  starred = false,
+  icon,
 }: {
   href: string;
-  title: string;
+  eyebrow: string;
+  title: React.ReactNode;
   description: string;
-  starred?: boolean;
+  icon: React.ReactNode;
 }) {
   return (
     <Link
       href={href}
-      className="block rounded-lg border border-slate-300 bg-white p-4
-                 transition hover:border-slate-800 hover:bg-slate-50"
+      className={cardClasses({ interactive: true }) + " group flex flex-col gap-3"}
     >
-      <p className="font-semibold text-slate-900">
-        {starred ? (
-          <span aria-hidden="true" className="mr-1 text-amber-500">
-            ★
-          </span>
-        ) : null}
-        {title}
-      </p>
-      <p className="mt-1 text-sm text-slate-600">{description}</p>
+      <span
+        aria-hidden="true"
+        className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-soft text-primary [&>svg]:h-[18px] [&>svg]:w-[18px]"
+      >
+        {icon}
+      </span>
+      <span className="space-y-1">
+        <span className="eyebrow block">{eyebrow}</span>
+        <span className="block font-semibold text-fg">{title}</span>
+        <span className="block text-sm leading-relaxed text-fg-muted">
+          {description}
+        </span>
+      </span>
+      <span className="mt-auto inline-flex items-center gap-1 text-sm font-medium text-primary">
+        Ouvrir
+        <ArrowRight
+          aria-hidden="true"
+          className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
+        />
+      </span>
     </Link>
   );
 }
@@ -88,58 +91,56 @@ export default function HomePage() {
       : "—";
 
   return (
-    <div className="space-y-8">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-bold text-slate-900">
-          Compagnon bibliométrique HLA
-        </h1>
-        <p className="text-sm text-slate-700">
-          Explorer les co-occurrences entre allèles HLA et complications de la
-          transplantation rénale dans la littérature indexée.
-        </p>
-      </header>
+    <div className="space-y-10">
+      <PageHeader
+        eyebrow="Corpus A · espace allélique"
+        title="Compagnon bibliométrique HLA"
+        description="Explorer les co-occurrences entre allèles HLA et complications de la transplantation rénale dans la littérature indexée."
+      />
 
       <EpistemicNotice corpusVersion={corpus.version} />
 
       <SearchBar />
 
-      <section aria-label="Statistiques du corpus">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard
+      <section aria-label="Statistiques du corpus" className="space-y-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile
+            icon={<FileText />}
             value={NUMBER_FORMAT.format(stats.nArticles)}
             label="Articles"
           />
-          <StatCard
+          <StatTile
+            icon={<Stethoscope />}
             value={NUMBER_FORMAT.format(stats.nOutcomes)}
             label="Complications"
           />
-          <StatCard
+          <StatTile
+            icon={<Dna />}
             value={NUMBER_FORMAT.format(stats.nAlleles)}
             label="Allèles"
           />
-          <StatCard value={coverage} label="Couverture" />
+          <StatTile icon={<CalendarRange />} value={coverage} label="Couverture" />
         </div>
-        <p className="mt-2 text-xs text-slate-600">
-          Corpus <strong>{corpus.version}</strong> (univers {corpus.universe}),
+        <p className="text-xs text-fg-subtle">
+          Corpus <strong className="font-mono font-medium text-fg-muted">{corpus.version}</strong> (univers {corpus.universe}),
           figé le {formatBuiltAt(corpus.builtAt)}. Corpus gelé : les chiffres
           ne changent pas tant qu&apos;il n&apos;est pas reconstruit.
         </p>
       </section>
 
-      <section aria-label="Points d'entrée" className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
-          Par où commencer
-        </h2>
-        <div className="grid gap-3 sm:grid-cols-3">
+      <Section aria-label="Points d'entrée" title="Par où commencer">
+        <div className="grid gap-4 sm:grid-cols-3">
           <EntryCard
-            starred
             href={`/allele/${encodeURIComponent(SHOWCASE_ALLELE)}`}
-            title={`Allèle — ${SHOWCASE_ALLELE}`}
+            eyebrow="Fiche allèle"
+            icon={<Dna />}
+            title={<span className="allele">{SHOWCASE_ALLELE}</span>}
             description="Toutes les complications co-mentionnées avec cet allèle, et les phrases sources."
           />
           <EntryCard
             href="/complication"
+            eyebrow="Fiche complication"
+            icon={<Stethoscope />}
             title="Complication"
             description="Partir d'une complication clinique et voir quels allèles l'accompagnent dans le texte."
           />
@@ -147,11 +148,13 @@ export default function HomePage() {
             // Route en anglais (`/graph`) : c'est le chemin pose par le plan
             // de taches. Le libelle affiche reste francais, comme partout.
             href="/graph"
+            eyebrow="Exploration"
+            icon={<Network />}
             title="Graphe"
             description="Vue d'ensemble des co-mentions du corpus, allèles et complications reliés."
           />
         </div>
-      </section>
+      </Section>
     </div>
   );
 }

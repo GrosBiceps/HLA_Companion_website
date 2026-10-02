@@ -1,8 +1,43 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import { Inter, JetBrains_Mono, Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 import { getCorpusVersion } from "@/lib/db";
 import { SyntheticBanner } from "@/components/SyntheticBanner";
 import { GlobalFramingReminder } from "@/components/GlobalFramingReminder";
+import { SiteHeader } from "@/components/shell/SiteHeader";
+import { SiteFooter } from "@/components/shell/SiteFooter";
+
+/**
+ * Typographie (voir docs/DESIGN_SYSTEM.md) :
+ *  - Inter          : interface et texte courant (`font-sans`) ;
+ *  - Source Serif 4 : titres de page et de section (`font-serif`) — registre
+ *                     de la publication scientifique ;
+ *  - JetBrains Mono : noms d'alleles, PMID, versions (`font-mono`, `.allele`).
+ * Polices auto-hebergees par next/font au build : aucune requete tierce a
+ * l'execution.
+ */
+const sans = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
+const serif = Source_Serif_4({
+  subsets: ["latin"],
+  variable: "--font-serif",
+  display: "swap",
+});
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+});
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#F7F6F2" },
+    { media: "(prefers-color-scheme: dark)", color: "#0D1017" },
+  ],
+};
 
 /**
  * ⚠ La description est le SEUL texte de cadrage qui atteint quelqu'un qui n'a
@@ -30,9 +65,10 @@ export const metadata: Metadata = {
  * construction. Les fiches ajoutent leur propre cadrage par-dessus ; celui-ci
  * est la garantie, pas la totalite du propos.
  *
- * ORDRE DES DEUX BANDEAUX. Le bandeau « donnees synthetiques » est en premier
- * et colle en haut (`sticky`) : c'est une alerte temporaire de prototype, et
- * tant qu'elle tient, elle prime. Le rappel de cadrage suit, en teinte
+ * ORDRE DES BANDEAUX. Le bandeau « donnees synthetiques » est en premier et
+ * colle en haut avec l'en-tete (un seul bloc `sticky`) : c'est une alerte
+ * temporaire de prototype, et tant qu'elle tient, elle prime — elle reste
+ * visible au defilement. Le rappel de cadrage suit sous l'en-tete, en teinte
  * discrete — il est permanent et ne doit pas crier.
  */
 export default function RootLayout({
@@ -43,11 +79,31 @@ export default function RootLayout({
   const corpus = getCorpusVersion();
 
   return (
-    <html lang="fr">
-      <body>
-        {corpus.isSynthetic ? <SyntheticBanner version={corpus.version} /> : null}
+    <html
+      lang="fr"
+      className={`${sans.variable} ${serif.variable} ${mono.variable}`}
+    >
+      <body className="flex min-h-screen flex-col">
+        <a
+          href="#contenu"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[80] focus:rounded-lg focus:bg-surface focus:px-3 focus:py-2 focus:text-sm focus:shadow-raised"
+        >
+          Aller au contenu
+        </a>
+        <div className="sticky top-0 z-50">
+          {corpus.isSynthetic ? (
+            <SyntheticBanner version={corpus.version} />
+          ) : null}
+          <SiteHeader />
+        </div>
         <GlobalFramingReminder />
-        <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+        <main
+          id="contenu"
+          className="mx-auto w-full max-w-content flex-1 px-4 py-8 sm:px-6 sm:py-10 lg:px-8"
+        >
+          {children}
+        </main>
+        <SiteFooter corpus={corpus} />
       </body>
     </html>
   );

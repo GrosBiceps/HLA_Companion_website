@@ -4,6 +4,8 @@ import type { Metadata } from "next";
 import { AlleleBreadcrumb } from "@/components/AlleleBreadcrumb";
 import { AssociationCard } from "@/components/AssociationCard";
 import { CATEGORIES } from "@/lib/labels";
+import { categoryClasses, categoryDisplay } from "@/lib/theme";
+import { AlleleName, Badge, HlaClassBadge, PageHeader } from "@/components/ui";
 import {
   getAlleleAncestry,
   getAlleleByKey,
@@ -102,14 +104,26 @@ export default async function AllelePage({ params }: Params) {
     <div className="space-y-6">
       <AlleleBreadcrumb ancestry={ancestry} />
 
-      <header className="space-y-2">
-        <h1 className="text-2xl font-bold text-slate-900">{allele.hla}</h1>
-        <p className="text-sm text-slate-700">
+      <PageHeader
+        eyebrow="Fiche allèle"
+        title={<AlleleName hla={allele.hla} className="font-semibold" />}
+        meta={
+          <>
+            <HlaClassBadge hlaClass={allele.hlaClass} />
+            <Badge>Locus {allele.locus}</Badge>
+            <Badge>Résolution {allele.resolution}</Badge>
+          </>
+        }
+      >
+        <p className="text-sm text-fg-muted">
           Classe {allele.hlaClass}, locus {allele.locus}, résolution{" "}
-          {allele.resolution} — mentionné dans {allele.nMentions} article
-          {allele.nMentions > 1 ? "s" : ""} du corpus.
+          {allele.resolution} — mentionné dans{" "}
+          <strong className="tabular font-semibold text-fg">
+            {allele.nMentions} article{allele.nMentions > 1 ? "s" : ""}
+          </strong>{" "}
+          du corpus.
         </p>
-      </header>
+      </PageHeader>
 
       {/*
         Cadrage propre a la fiche, qui s'ajoute au rappel global du layout. Il
@@ -118,8 +132,7 @@ export default async function AllelePage({ params }: Params) {
       */}
       <section
         aria-label="Comment lire cette fiche"
-        className="rounded-md border-l-4 border-slate-900 bg-slate-100 px-4 py-3
-                   text-sm text-slate-900"
+        className="rounded-lg border-l-[3px] border-primary/60 bg-primary-soft/60 px-4 py-3 text-sm leading-relaxed text-fg"
       >
         <p>
           Chaque ligne compte des <strong>articles où l&apos;allèle et la
@@ -131,9 +144,9 @@ export default async function AllelePage({ params }: Params) {
         <p className="mt-1">
           Toute lecture clinique exige de relire les phrases sources.{" "}
           <Link
-            href="/methodologie"
-            className="font-medium underline underline-offset-2
-                       hover:text-slate-600"
+            href="/methode"
+            className="font-medium underline decoration-primary/30 underline-offset-[3px]
+                       hover:text-primary"
           >
             Méthodologie
           </Link>
@@ -141,14 +154,16 @@ export default async function AllelePage({ params }: Params) {
       </section>
 
       <section aria-label="Complications co-mentionnées" className="space-y-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
-          Complications co-mentionnées ({associations.length})
+        <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
+          Complications co-mentionnées{" "}
+          <span className="tabular font-sans text-base font-normal text-fg-subtle">
+            ({associations.length})
+          </span>
         </h2>
 
         {associations.length === 0 ? (
-          <p className="rounded-md border border-slate-300 bg-white px-4 py-3
-                        text-sm text-slate-700">
+          <p className="rounded-lg border border-line bg-surface px-4 py-3
+                        text-sm text-fg-muted">
             Aucune complication n&apos;est co-mentionnée avec cet allèle dans ce
             corpus. Ce n&apos;est pas un résultat sur la clinique : c&apos;est
             l&apos;état de la littérature indexée telle qu&apos;elle a été
@@ -156,7 +171,7 @@ export default async function AllelePage({ params }: Params) {
           </p>
         ) : (
           <>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-fg-muted">
               {nSignificant} ligne{nSignificant > 1 ? "s" : ""} au-dessus du
               seuil statistique du corpus, {associations.length - nSignificant}{" "}
               en dessous. Les secondes restent affichées, grisées : une absence
@@ -165,10 +180,14 @@ export default async function AllelePage({ params }: Params) {
 
             {groups.map(({ category, rows }) => (
               <div key={category} className="space-y-3">
-                <h3 className="border-b border-slate-200 pb-1 text-sm
-                               font-semibold text-slate-900">
-                  {category}{" "}
-                  <span className="font-normal text-slate-500">
+                <h3 className="flex items-center gap-2 border-b border-line pb-2 text-sm
+                               font-semibold text-fg">
+                  <span
+                    aria-hidden="true"
+                    className={`h-2.5 w-2.5 rounded-[3px] ${categoryClasses(category).bg}`}
+                  />
+                  {categoryDisplay(category)}{" "}
+                  <span className="font-normal text-fg-subtle">
                     ({rows.length})
                   </span>
                 </h3>
@@ -188,11 +207,10 @@ export default async function AllelePage({ params }: Params) {
 
       {children.length > 0 ? (
         <section aria-label="Allèles de résolution plus fine" className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide
-                         text-slate-700">
+          <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
             Résolution plus fine
           </h2>
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-fg-muted">
             Ces allèles comptent leurs propres articles : les chiffres ci-dessus
             ne s&apos;y reportent pas tels quels.
           </p>
@@ -201,12 +219,12 @@ export default async function AllelePage({ params }: Params) {
               <li key={child.hla}>
                 <Link
                   href={`/allele/${encodeURIComponent(child.hla)}`}
-                  className="inline-block rounded border border-slate-300
-                             bg-white px-3 py-1 text-sm text-slate-900
-                             hover:border-slate-800 hover:bg-slate-50"
+                  className="inline-block rounded-lg border border-line
+                             bg-surface px-3 py-1 text-sm text-fg
+                             hover:border-primary/50 hover:bg-surface-muted"
                 >
-                  {child.hla}{" "}
-                  <span className="text-xs text-slate-500">
+                  <span className="allele">{child.hla}</span>{" "}
+                  <span className="text-xs text-fg-subtle">
                     ({child.nMentions})
                   </span>
                 </Link>

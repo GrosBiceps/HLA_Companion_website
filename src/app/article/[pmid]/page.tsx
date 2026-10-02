@@ -101,8 +101,8 @@ export default async function ArticlePage({ params }: Params) {
   return (
     <div className="space-y-6">
       <header className="space-y-2">
-        <h1 className="text-2xl font-bold text-slate-900">{article.title}</h1>
-        <p className="text-sm text-slate-700">
+        <h1 className="font-serif text-2xl font-semibold leading-snug tracking-tight text-fg sm:text-3xl">{article.title}</h1>
+        <p className="text-sm text-fg-muted">
           {article.journal ?? article.journalAbbrev ?? "Revue non renseignée"} ·{" "}
           {article.year}
           {article.citedBy !== null ? ` · ${article.citedBy} citations` : ""}
@@ -112,8 +112,8 @@ export default async function ArticlePage({ params }: Params) {
             href={`https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(pmid)}/`}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium text-slate-900 underline underline-offset-2
-                       hover:text-slate-600"
+            className="font-medium text-fg underline decoration-primary/30 underline-offset-[3px]
+                       hover:text-primary"
           >
             Lire la référence sur PubMed (PMID {pmid})
           </a>
@@ -122,8 +122,7 @@ export default async function ArticlePage({ params }: Params) {
 
       {authors.length > 0 ? (
         <section aria-label="Auteurs" className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide
-                         text-slate-700">
+          <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
             Auteurs
           </h2>
           {/* Ordre de signature conserve : il porte de l'information. */}
@@ -132,13 +131,13 @@ export default async function ArticlePage({ params }: Params) {
               <li key={author.authorId}>
                 <Link
                   href={`/auteur/${encodeURIComponent(author.authorId)}`}
-                  className="inline-block rounded border border-slate-300
-                             bg-white px-3 py-1 text-sm text-slate-900
-                             hover:border-slate-800 hover:bg-slate-50"
+                  className="inline-block rounded-lg border border-line
+                             bg-surface px-3 py-1 text-sm text-fg
+                             hover:border-primary/50 hover:bg-surface-muted"
                 >
                   {author.displayName}
                   {author.isLast && authors.length > 1 ? (
-                    <span className="ml-1 text-xs text-slate-500">
+                    <span className="ml-1 text-xs text-fg-subtle">
                       (dernier auteur)
                     </span>
                   ) : null}
@@ -146,7 +145,7 @@ export default async function ArticlePage({ params }: Params) {
               </li>
             ))}
           </ul>
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-fg-muted">
             Identités déduites par normalisation des noms — homonymes
             possibles.
           </p>
@@ -155,34 +154,32 @@ export default async function ArticlePage({ params }: Params) {
 
       {article.abstract ? (
         <section aria-label="Résumé" className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide
-                         text-slate-700">
+          <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
             Résumé
           </h2>
-          <p className="whitespace-pre-line rounded-md border border-slate-200
-                        bg-white px-4 py-3 text-sm leading-relaxed
-                        text-slate-800">
+          <p className="whitespace-pre-line rounded-lg border border-line
+                        bg-surface px-4 py-3 text-sm leading-relaxed
+                        text-fg">
             {article.abstract}
           </p>
         </section>
       ) : null}
 
       <section aria-label="Mentions repérées" className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
+        <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
           Mentions repérées dans cet article ({pairs.length})
         </h2>
 
         {pairs.length === 0 ? (
-          <p className="rounded-md border border-slate-300 bg-white px-4 py-3
-                        text-sm text-slate-700">
+          <p className="rounded-lg border border-line bg-surface px-4 py-3
+                        text-sm text-fg-muted">
             Aucune co-mention allèle / complication n&apos;a été extraite de cet
             article. L&apos;extraction est automatique et imparfaite : une
             absence ici ne dit rien du contenu réel de l&apos;article.
           </p>
         ) : (
           <>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-fg-muted">
               Les segments surlignés sont ceux que l&apos;extraction a repérés.
               Relire la phrase entière est le seul moyen de vérifier qu&apos;ils
               portent bien sur ce qu&apos;ils prétendent.
@@ -203,22 +200,22 @@ export default async function ArticlePage({ params }: Params) {
               return (
                 <div
                   key={`${hla}:${outcome}`}
-                  className="space-y-2 rounded-lg border border-slate-300
-                             bg-white p-4"
+                  className="space-y-2 rounded-lg border border-line
+                             bg-surface p-4"
                 >
-                  <h3 className="text-base font-semibold text-slate-900">
+                  <h3 className="text-base font-semibold text-fg">
                     <Link
                       href={`/allele/${encodeURIComponent(hla)}`}
-                      className="underline underline-offset-2
-                                 hover:text-slate-600"
+                      className="underline decoration-primary/30 underline-offset-[3px]
+                                 hover:text-primary"
                     >
                       {hla}
                     </Link>{" "}
-                    <span className="font-normal text-slate-500">×</span>{" "}
+                    <span className="font-normal text-fg-subtle">×</span>{" "}
                     <Link
                       href={`/complication/${encodeURIComponent(outcome)}`}
-                      className="underline underline-offset-2
-                                 hover:text-slate-600"
+                      className="underline decoration-primary/30 underline-offset-[3px]
+                                 hover:text-primary"
                     >
                       {label}
                     </Link>
@@ -228,8 +225,8 @@ export default async function ArticlePage({ params }: Params) {
                     {rows.map((mention) => (
                       <li
                         key={mention.pairMentionId}
-                        className="border-l-2 border-slate-200 pl-3 text-sm
-                                   text-slate-800"
+                        className="border-l-2 border-line pl-3 text-sm
+                                   text-fg"
                       >
                         <HighlightedSentence
                           sentence={mention.sentence}
@@ -238,7 +235,7 @@ export default async function ArticlePage({ params }: Params) {
                         />
                         {mention.polarity === "negated" ? (
                           <p className="mt-1 text-sm font-medium
-                                        text-amber-900">
+                                        text-warn-soft-fg">
                             Mention au sens négatif
                             {mention.negationTrigger
                               ? ` (« ${mention.negationTrigger} »)`

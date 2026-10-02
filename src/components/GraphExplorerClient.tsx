@@ -19,8 +19,8 @@ import type { SignalLevel } from "@/lib/types";
 const GraphExplorer = dynamic(() => import("@/components/GraphExplorer"), {
   ssr: false,
   loading: () => (
-    <p className="rounded border border-slate-200 bg-white p-8 text-center
-                  text-slate-500">
+    <p className="rounded-xl border border-line bg-surface p-10 text-center text-sm
+                  text-fg-subtle">
       Chargement de l&apos;explorateur…
     </p>
   ),

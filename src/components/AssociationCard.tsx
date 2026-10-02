@@ -6,6 +6,8 @@ import { SentenceDrawer } from "@/components/SentenceDrawer";
 import { SignalIndicator } from "@/components/SignalIndicator";
 import { buttonClasses } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
+import { formatInt } from "@/lib/format";
+import { ALL_ORGANS, organLabel, type OrganSelection } from "@/lib/organ";
 import { SIGNAL_CLASSES } from "@/lib/theme";
 import type { AssociationRow } from "@/lib/types";
 
@@ -60,8 +62,11 @@ function sci(value: number | null): string {
 export function AssociationCard({
   association,
   title,
+  organ = ALL_ORGANS,
 }: {
   association: AssociationRow;
+  /** Strate des chiffres de la carte (rappelee dans le detail statistique). */
+  organ?: OrganSelection;
   /**
    * Titre de la carte. Par defaut le LIBELLE CLINIQUE de la complication
    * (fiche allele). La fiche complication passe le nom de l'allele, puisque
@@ -86,6 +91,7 @@ export function AssociationCard({
     orCiHigh,
     fdr,
     fdrTwoSided,
+    nUniverse,
   } = association;
 
   const muted = !isSignificant;
@@ -233,6 +239,13 @@ export function AssociationCard({
               résumés, pas une relation observée chez des patients.
             </p>
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+              <dt className="text-fg-subtle">Strate</dt>
+              <dd className="text-fg">
+                {organLabel(organ)}
+                {nUniverse !== null
+                  ? ` — calculé sur ${formatInt(nUniverse)} articles`
+                  : ""}
+              </dd>
               <dt className="text-fg-subtle">NPMI</dt>
               <dd className="tabular font-mono text-fg">{num(npmi)}</dd>
               <dt className="text-fg-subtle">Odds ratio</dt>
@@ -257,6 +270,7 @@ export function AssociationCard({
           hla={hla}
           outcome={outcome}
           label={label}
+          organ={organ}
           onClose={() => setDrawerOpen(false)}
         />
       ) : null}

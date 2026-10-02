@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getNeighborhood } from "@/lib/queries";
 import { SIGNAL_LEVELS } from "@/lib/labels";
+import { ORGAN_PARAM, parseOrganParam } from "@/lib/organ";
 import type { SignalLevel } from "@/lib/types";
 
 /**
@@ -41,7 +42,9 @@ export function GET(request: NextRequest) {
   }
 
   try {
-    const graph = getNeighborhood(center, depth, minSignal);
+    // `?organe=coeur` : le graphe de la strate (statistiques de l'organe).
+    const organ = parseOrganParam(params.get(ORGAN_PARAM));
+    const graph = getNeighborhood(center, depth, minSignal, organ);
     if (!graph.center) {
       return NextResponse.json({ error: "unknown_center" }, { status: 404 });
     }

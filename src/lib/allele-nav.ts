@@ -7,6 +7,7 @@
  */
 
 import { getDb } from "./db";
+import { ALL_ORGANS, type OrganSelection } from "./organ";
 
 /** Sous-type d'un allele avec ses effectifs. */
 export interface AlleleChildSummary {
@@ -22,18 +23,22 @@ export interface AlleleChildSummary {
  * Enfants directs d'une entite, du plus au moins cite. Deux sous-requetes
  * indexees par ligne : quelques dizaines de lignes au plus.
  */
-export function getAlleleChildSummaries(hla: string): AlleleChildSummary[] {
+export function getAlleleChildSummaries(
+  hla: string,
+  organ: OrganSelection = ALL_ORGANS,
+): AlleleChildSummary[] {
   const rows = getDb()
     .prepare(
       `SELECT h.hla, h.resolution,
-              (SELECT COUNT(DISTINCT hm.pmid) FROM hla_mentions hm
-                WHERE hm.hla = h.hla) AS n_articles,
+              COALESCE((SELECT c.n_articles FROM hla_organ_counts c
+                         WHERE c.organ = ? AND c.hla = h.hla), 0) AS n_articles,
               (SELECT COUNT(*) FROM associations a
-                WHERE a.hla = h.hla AND a.signal_level <> 'weak') AS n_marked
+                WHERE a.organ = ? AND a.hla = h.hla
+                  AND a.signal_level <> 'weak') AS n_marked
          FROM hla_entities h
         WHERE h.parent_hla = ?`,
     )
-    .all(hla) as {
+    .all(organ, organ, hla) as {
     hla: string;
     resolution: string;
     n_articles: number;

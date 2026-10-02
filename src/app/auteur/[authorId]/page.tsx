@@ -12,6 +12,8 @@ import {
   Section,
   StatTile,
 } from "@/components/ui";
+import { OrganBreakdown } from "@/components/organ/OrganBreakdown";
+import { OrganBadges, OrganStrip } from "@/components/organ/OrganChip";
 import { BarList } from "@/components/entity/BarList";
 import { YearSparkline } from "@/components/entity/YearSparkline";
 import { categoryColor, hlaClassColor } from "@/lib/theme";
@@ -19,12 +21,21 @@ import { formatInt, plural, yearSpan } from "@/lib/format";
 import {
   getAuthor,
   getAuthorInterests,
+  getAuthorOrganMix,
   getAuthorPublications,
   getAuthorshipRoles,
   getCoAuthors,
   getCorpusYearRange,
   type YearCount,
 } from "@/lib/queries";
+import {
+  ALL_ORGANS,
+  organFromPage,
+  organLabel,
+  organShortLabel,
+  withOrgan,
+  type PageSearchParams,
+} from "@/lib/organ";
 import type { Article } from "@/lib/types";
 
 /**
@@ -57,6 +68,10 @@ import type { Article } from "@/lib/types";
  * TRAJECTOIRE. Le corpus ne porte ni affiliation ni date par institution :
  * on n'affiche que ce qui est derivable — publications par annee, position
  * de signature — plutot que de fabriquer une narration.
+ *
+ * ORGANE. La fiche montre le MELANGE D'ORGANES de l'auteur (articles par
+ * organe : un article multi-organe compte dans chacun) ; `?organe=coeur` filtre
+ * ses publications, son profil, ses co-auteurs et sa signature sur cet organe.
  */
 
 /** Libelle exact impose par la spec. NE PAS REFORMULER. */
@@ -64,6 +79,7 @@ export const HOMONYM_RESERVATION =
   "Identité déduite par normalisation du nom — homonymes possibles";
 
 type Params = { params: Promise<{ authorId: string }> };
+type Props = Params & { searchParams?: PageSearchParams };
 
 function safeDecode(raw: string): string {
   try {
@@ -109,16 +125,19 @@ function byYear(publications: Article[]): { year: number; items: Article[] }[] {
   return groups;
 }
 
-export default async function AuthorPage({ params }: Params) {
+export default async function AuthorPage({ params, searchParams }: Props) {
   const authorId = safeDecode((await params).authorId);
+  const organ = await organFromPage(searchParams);
 
   const author = getAuthor(authorId);
   if (!author) notFound();
 
-  const publications = getAuthorPublications(authorId);
-  const interests = getAuthorInterests(authorId);
-  const coAuthors = getCoAuthors(authorId);
-  const roles = getAuthorshipRoles(authorId);
+  const publications = getAuthorPublications(authorId, organ);
+  const interests = getAuthorInterests(authorId, organ);
+  const coAuthors = getCoAuthors(authorId, organ);
+  const roles = getAuthorshipRoles(authorId, organ);
+  const organMix = getAuthorOrganMix(authorId);
+  const baseHref = `/auteur/${encodeURIComponent(authorId)}`;
 
   const years = publications.map((p) => p.year);
   const yearMin = years.length > 0 ? Math.min(...years) : null;
@@ -152,7 +171,8 @@ export default async function AuthorPage({ params }: Params) {
           <span>{HOMONYM_RESERVATION}</span>
         </p>
         <p className="text-base text-fg-muted">
-          {nPub} publication{nPub > 1 ? "s" : ""} dans le corpus
+          {nPub} publication{nPub > 1 ? "s" : ""}{" "}
+          {organ === ALL_ORGANS ? "dans le corpus" : `dans la strate ${organShortLabel(organ)}`}
           {yearMin !== null && yearMax !== null
             ? yearMin === yearMax
               ? ` (${yearMin})`
@@ -161,6 +181,25 @@ export default async function AuthorPage({ params }: Params) {
           .
         </p>
       </PageHeader>
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+        <OrganStrip
+          baseHref={baseHref}
+          selected={organ}
+          counts={Object.fromEntries(organMix.map((c) => [c.organ, c.nArticles]))}
+          allCount={author.nPublications}
+          label="Filtrer ses publications par organe"
+          hint="Effectifs : ses articles dans chaque organe. Un article qui concerne deux organes compte dans les deux."
+        />
+        <OrganBreakdown
+          counts={organMix}
+          selected={organ}
+          hrefFor={(o) => withOrgan(baseHref, o)}
+          total={author.nPublications}
+          unit="publication"
+          title="Mélange d'organes"
+        />
+      </div>
 
       <Callout
         tone="framing"
@@ -286,7 +325,7 @@ export default async function AuthorPage({ params }: Params) {
                   max={nPub}
                   items={topHla.map(({ entity, nArticles }) => ({
                     key: entity.hla,
-                    href: `/allele/${encodeURIComponent(entity.hla)}`,
+                    href: withOrgan(`/allele/${encodeURIComponent(entity.hla)}`, organ),
                     label: <AlleleName hla={entity.hla} />,
                     value: nArticles,
                     color: hlaClassColor(entity.hlaClass).css,
@@ -330,7 +369,7 @@ export default async function AuthorPage({ params }: Params) {
                   max={nPub}
                   items={topOutcomes.map(({ entity, nArticles }) => ({
                     key: entity.outcome,
-                    href: `/complication/${encodeURIComponent(entity.outcome)}`,
+                    href: withOrgan(`/complication/${encodeURIComponent(entity.outcome)}`, organ),
                     // Libelle clinique de la base, jamais la cle technique.
                     label: entity.label,
                     value: nArticles,
@@ -364,11 +403,17 @@ export default async function AuthorPage({ params }: Params) {
                   {items.map((article) => (
                     <li key={article.pmid} className="px-4 py-3">
                       <Link
-                        href={`/article/${encodeURIComponent(article.pmid)}`}
+                        href={withOrgan(`/article/${encodeURIComponent(article.pmid)}`, organ)}
                         className="text-sm font-medium leading-snug text-fg hover:text-primary hover:underline hover:decoration-primary/40 hover:underline-offset-[3px]"
                       >
                         {article.title}
                       </Link>
+                      <OrganBadges
+                        organs={article.organs}
+                        selected={organ}
+                        hrefFor={(o) => withOrgan(baseHref, o)}
+                        className="mt-1.5"
+                      />
                       <p className="mt-1 text-xs text-fg-muted">
                         <span className="italic">
                           {article.journal ??
@@ -404,7 +449,7 @@ export default async function AuthorPage({ params }: Params) {
                 unit="art."
                 items={topCo.map((co) => ({
                   key: co.authorId,
-                  href: `/auteur/${encodeURIComponent(co.authorId)}`,
+                  href: withOrgan(`/auteur/${encodeURIComponent(co.authorId)}`, organ),
                   label: co.displayName,
                   value: co.nSharedArticles,
                 }))}
@@ -424,7 +469,7 @@ export default async function AuthorPage({ params }: Params) {
                     {otherCo.map((co) => (
                       <li key={co.authorId}>
                         <Link
-                          href={`/auteur/${encodeURIComponent(co.authorId)}`}
+                          href={withOrgan(`/auteur/${encodeURIComponent(co.authorId)}`, organ)}
                           className="inline-flex items-center gap-1 rounded-md bg-surface-muted px-2 py-0.5 text-xs text-fg ring-1 ring-inset ring-line hover:ring-line-strong"
                         >
                           {co.displayName}

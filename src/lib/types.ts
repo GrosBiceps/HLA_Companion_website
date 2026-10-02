@@ -6,6 +6,8 @@
  * niveau de signal) n'est affichee telle quelle : elle passe par labels.ts.
  */
 
+import type { OrganKey, OrganSelection } from "./organ";
+
 export type SignalLevel =
   | "inverse"
   | "strong"
@@ -40,6 +42,22 @@ export interface HlaEntity {
   nMentions: number;
 }
 
+/** Un organe et le nombre d'articles de sa strate. */
+export interface OrganInfo {
+  key: OrganKey;
+  label: string;
+  shortLabel: string;
+  slug: string;
+  /** Articles de la strate (un article multi-organe compte dans chacune). */
+  nArticles: number;
+}
+
+/** Effectif d'articles dans un organe (ventilation « Par organe »). */
+export interface OrganCount {
+  organ: OrganKey;
+  nArticles: number;
+}
+
 export interface Outcome {
   outcome: string;
   label: string;
@@ -60,6 +78,8 @@ export interface Article {
   citedBy: number | null;
   source: string | null;
   graftAssignment: string | null;
+  /** Organes de l'article, le principal en tete (au moins un). */
+  organs: OrganKey[];
 }
 
 export interface Author {
@@ -86,6 +106,11 @@ export interface AssociationRow {
   orCiHigh: number | null;
   fdr: number | null;
   fdrTwoSided: number | null;
+  /**
+   * Denominateur de la strate de la ligne : articles de l'organe (ou du corpus
+   * entier pour `all`). Les metriques ci-dessus sont calculees dessus.
+   */
+  nUniverse: number | null;
 }
 
 /** Alias historique : `Association` est le nom du type dans le plan. */
@@ -170,6 +195,8 @@ export interface AssociationMatrixCell {
  * le corpus », pas « signal nul ».
  */
 export interface AssociationMatrix {
+  /** Strate de la matrice : `all` ou un organe. */
+  organ?: OrganSelection;
   resolution: "2-digit" | "4-digit";
   /** Locus affiche, ou null quand tous les loci sont presents. */
   locus?: string | null;
@@ -180,6 +207,12 @@ export interface AssociationMatrix {
   /** Ordre des categories cliniques (`CATEGORIES`), puis libelle. */
   outcomes: MatrixOutcome[];
   cells: AssociationMatrixCell[];
+  /**
+   * Paires de la strate sur une complication d'un AUTRE organe (articles
+   * concernant deux organes), non representees dans la grille d'un organe.
+   * Toujours 0 pour « tous les organes ».
+   */
+  nCellsOutsideOrgan?: number;
 }
 
 /** Nombre d'articles du corpus pour une annee de publication. */

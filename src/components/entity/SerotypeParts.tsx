@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AlleleName } from "@/components/ui/AlleleName";
 import { cn } from "@/lib/cn";
 import { formatInt, plural } from "@/lib/format";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 import type {
   AlleleSerotype,
   SerotypeKind,
@@ -43,7 +44,10 @@ export function SerotypeBadge({
   kind = "specific",
   partial = false,
   className,
+  organ = ALL_ORGANS,
 }: {
+  /** Strate reportee sur le lien. */
+  organ?: OrganSelection;
   serotypeId: string;
   kind?: SerotypeKind;
   /** Vrai si seuls certains alleles du groupe portent ce serotype. */
@@ -55,7 +59,7 @@ export function SerotypeBadge({
     : `${KIND_LABELS[kind]} ${serotypeId}`;
   return (
     <Link
-      href={serotypeHref(serotypeId)}
+      href={withOrgan(serotypeHref(serotypeId), organ)}
       title={title}
       className={cn(
         "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors",
@@ -77,9 +81,11 @@ export function SerotypeBadge({
 export function SerotypeBadges({
   serotypes,
   className,
+  organ = ALL_ORGANS,
 }: {
   serotypes: AlleleSerotype[];
   className?: string;
+  organ?: OrganSelection;
 }) {
   if (serotypes.length === 0) return null;
   return (
@@ -90,6 +96,7 @@ export function SerotypeBadges({
             serotypeId={s.serotypeId}
             kind={s.kind}
             partial={s.partial}
+            organ={organ}
           />
         </li>
       ))}
@@ -97,8 +104,8 @@ export function SerotypeBadges({
   );
 }
 
-function href(hla: string): string {
-  return `/allele/${encodeURIComponent(hla)}`;
+function href(hla: string, organ: OrganSelection = ALL_ORGANS): string {
+  return withOrgan(`/allele/${encodeURIComponent(hla)}`, organ);
 }
 
 function Marked({ n }: { n: number }) {
@@ -144,7 +151,14 @@ export function groupMembers(members: SerotypeMember[]): MemberGroup[] {
  * lie a sa fiche, avec son effectif d'articles et le nombre de ses
  * co-occurrences au-dessus du seuil.
  */
-export function SerotypeMembers({ members }: { members: SerotypeMember[] }) {
+export function SerotypeMembers({
+  members,
+  organ = ALL_ORGANS,
+}: {
+  members: SerotypeMember[];
+  /** Strate des effectifs ; reportee sur les liens. */
+  organ?: OrganSelection;
+}) {
   const groups = groupMembers(members);
   return (
     <div className="space-y-3">
@@ -158,7 +172,7 @@ export function SerotypeMembers({ members }: { members: SerotypeMember[] }) {
             className="overflow-hidden rounded-xl border border-line bg-surface shadow-xs"
           >
             <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-surface-muted/60 px-4 py-2.5">
-              <Link href={href(key)} className="group min-w-0">
+              <Link href={href(key, organ)} className="group min-w-0">
                 <AlleleName
                   hla={key}
                   className="text-sm font-semibold text-fg group-hover:text-primary group-hover:underline"
@@ -186,7 +200,7 @@ export function SerotypeMembers({ members }: { members: SerotypeMember[] }) {
                 {sorted.map((m) => (
                   <li key={m.hla}>
                     <Link
-                      href={href(m.hla)}
+                      href={href(m.hla, organ)}
                       title={`${m.hla} — ${plural(m.nArticles, "article")}${
                         m.nMarked > 0
                           ? `, ${m.nMarked} co-occurrence${m.nMarked > 1 ? "s" : ""} au-dessus du seuil`

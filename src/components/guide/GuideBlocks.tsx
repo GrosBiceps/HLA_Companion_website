@@ -323,7 +323,11 @@ const GLOSSARY: { term: string; def: string }[] = [
   },
   {
     term: "Complication",
-    def: "Événement clinique du suivi de greffe rénale repéré dans le texte (rejet, infection, perte du greffon…), regroupé en sept catégories.",
+    def: "Événement clinique du suivi de greffe repéré dans le texte (rejet, infection, perte du greffon, réaction du greffon contre l'hôte…), regroupé en catégories cliniques. Certaines concernent plusieurs organes, d'autres un seul.",
+  },
+  {
+    term: "Organe (strate)",
+    def: "Rein, foie, cœur, poumon, cellules souches hématopoïétiques (GCSH), pancréas ou intestin. Choisir un organe recalcule les chiffres sur ses seuls articles, avec son propre dénominateur ; « tous les organes » est une strate à part, pas une somme.",
   },
   {
     term: "Co-occurrence",

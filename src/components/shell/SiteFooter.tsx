@@ -1,8 +1,7 @@
-import Link from "next/link";
 import { EXTRACTION_METRICS } from "@/lib/extraction-metrics";
 import type { CorpusVersion } from "@/lib/types";
 import { LogoMark } from "./Logo";
-import { NAV_ITEMS } from "./nav";
+import { FooterNav } from "./FooterNav";
 
 function formatDate(iso: string): string {
   const date = new Date(iso);
@@ -41,6 +40,8 @@ export function SiteFooter({ corpus }: { corpus: CorpusVersion }) {
             dans la littérature indexée : ce ne sont pas des associations
             cliniques ni causales. Extraction automatique, précision mesurée{" "}
             {EXTRACTION_METRICS.precisionPct} — {EXTRACTION_METRICS.errorRatePhrase}.
+            Les autres organes sont des valeurs de remplissage synthétiques,
+            non mesurées.
           </p>
         </div>
 
@@ -64,18 +65,7 @@ export function SiteFooter({ corpus }: { corpus: CorpusVersion }) {
 
         <div className="space-y-3">
           <p className="eyebrow">Naviguer</p>
-          <ul className="space-y-1.5 text-sm">
-            {NAV_ITEMS.map((item) => (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className="text-fg-muted transition-colors hover:text-primary"
-                >
-                  {item.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <FooterNav />
         </div>
       </div>
 

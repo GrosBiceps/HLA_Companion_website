@@ -1,27 +1,32 @@
-import { SearchCommand } from "@/components/SearchBar";
-import { Logo } from "./Logo";
-import { MobileNav, NavLinks } from "./NavLinks";
+import { Suspense } from "react";
+import { ALL_ORGANS } from "@/lib/organ";
+import {
+  HeaderContent,
+  HeaderWithOrgan,
+  type HeaderBarProps,
+} from "./HeaderBar";
 
 /**
- * En-tete du site — logo, navigation, palette de recherche.
+ * En-tete du site — logo, navigation, selecteur d'organe, palette de
+ * recherche.
  *
  * Il n'est PAS collant par lui-meme : `layout.tsx` l'enveloppe avec le
  * bandeau « données synthétiques » dans un seul bloc `sticky`, pour que le
  * bandeau reste visible au defilement sans que les deux se chevauchent.
+ *
+ * ORGANE. La strate (`?organe=coeur`) est lue dans l'URL par `HeaderWithOrgan`
+ * (`useSearchParams`, cote client), ce qui suppose une frontiere `Suspense` :
+ * sur une page prerendue statiquement (methode, guide…), c'est le repli —
+ * le meme en-tete en strate « tous les organes » — qui part dans le HTML, puis
+ * le client le remplace par la strate reelle. Le layout ne peut pas lire les
+ * `searchParams` lui-meme (il n'est pas re-rendu a chaque navigation).
  */
-export function SiteHeader() {
+export function SiteHeader(props: HeaderBarProps) {
   return (
     <header className="relative border-b border-line bg-surface/85 backdrop-blur-md supports-[backdrop-filter]:bg-surface/75">
-      <div className="mx-auto flex h-[var(--header-h)] max-w-content items-center gap-3 px-4 sm:px-6 lg:px-8">
-        <Logo />
-        <div className="ml-2 hidden lg:block xl:ml-6">
-          <NavLinks />
-        </div>
-        <div className="ml-auto flex items-center gap-1.5">
-          <SearchCommand triggerClassName="w-48 2xl:w-60" />
-          <MobileNav />
-        </div>
-      </div>
+      <Suspense fallback={<HeaderContent organ={ALL_ORGANS} {...props} />}>
+        <HeaderWithOrgan {...props} />
+      </Suspense>
     </header>
   );
 }

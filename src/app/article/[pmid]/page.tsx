@@ -14,7 +14,9 @@ import {
   Section,
   buttonClasses,
 } from "@/components/ui";
+import { OrganBadges } from "@/components/organ/OrganChip";
 import { cn } from "@/lib/cn";
+import { organFromPage, withOrgan, type PageSearchParams } from "@/lib/organ";
 import { categoryClasses } from "@/lib/theme";
 import { formatInt, plural } from "@/lib/format";
 import type { HighlightNeedle } from "@/lib/highlight";
@@ -52,9 +54,14 @@ import type { PairMention } from "@/lib/types";
  * SURLIGNAGE. `HighlightedSentence` marque les deux spans extraits. C'est ce
  * qui rend l'extraction verifiable : un span mal place saute aux yeux. La
  * phrase n'est ni tronquee ni normalisee.
+ *
+ * ORGANE. L'article porte les organes qu'il concerne (puces sous le titre :
+ * un article peut en concerner plusieurs). Cliquer une puce selectionne
+ * l'organe ; les liens de la page reportent la strate courante.
  */
 
 type Params = { params: Promise<{ pmid: string }> };
+type Props = Params & { searchParams?: PageSearchParams };
 
 function safeDecode(raw: string): string {
   try {
@@ -105,8 +112,10 @@ function groupByPair(
   return pairs;
 }
 
-export default async function ArticlePage({ params }: Params) {
+export default async function ArticlePage({ params, searchParams }: Props) {
   const pmid = safeDecode((await params).pmid);
+  const organ = await organFromPage(searchParams);
+  const baseHref = `/article/${encodeURIComponent(pmid)}`;
 
   const article = getArticle(pmid);
   if (!article) notFound();
@@ -162,6 +171,17 @@ export default async function ArticlePage({ params }: Params) {
             }
           />
 
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-subtle">
+            <span className="eyebrow">
+              {article.organs.length > 1 ? "Organes" : "Organe"}
+            </span>
+            <OrganBadges
+              organs={article.organs}
+              selected={organ}
+              hrefFor={(o) => withOrgan(baseHref, o)}
+            />
+          </div>
+
           {authors.length > 0 ? (
             <section aria-label="Auteurs" className="space-y-2">
               {/* Ordre de signature conserve : il porte de l'information. */}
@@ -169,7 +189,7 @@ export default async function ArticlePage({ params }: Params) {
                 {authors.map((author, i) => (
                   <li key={author.authorId} className="inline">
                     <Link
-                      href={`/auteur/${encodeURIComponent(author.authorId)}`}
+                      href={withOrgan(`/auteur/${encodeURIComponent(author.authorId)}`, organ)}
                       className="font-medium text-fg underline decoration-fg/20 underline-offset-[3px] hover:text-primary hover:decoration-primary"
                     >
                       {author.displayName}
@@ -287,7 +307,7 @@ export default async function ArticlePage({ params }: Params) {
                   {entities.hla.map((e) => (
                     <li key={e.hla}>
                       <Link
-                        href={`/allele/${encodeURIComponent(e.hla)}`}
+                        href={withOrgan(`/allele/${encodeURIComponent(e.hla)}`, organ)}
                         className="inline-flex items-center gap-1 rounded-md bg-mark-hla px-1.5 py-0.5 text-xs text-mark-hla-fg hover:underline"
                       >
                         <AlleleName hla={e.hla} />
@@ -311,7 +331,7 @@ export default async function ArticlePage({ params }: Params) {
                         )}
                       />
                       <Link
-                        href={`/complication/${encodeURIComponent(e.outcome)}`}
+                        href={withOrgan(`/complication/${encodeURIComponent(e.outcome)}`, organ)}
                         className="min-w-0 truncate text-fg hover:text-primary hover:underline"
                       >
                         {e.label}
@@ -361,10 +381,10 @@ export default async function ArticlePage({ params }: Params) {
               return (
                 <Card key={`${hla}:${outcome}`} className="space-y-3">
                   <h3 className="flex flex-wrap items-baseline gap-x-1.5 text-[0.975rem] font-semibold leading-snug text-fg">
-                    <AlleleName hla={hla} href />
+                    <AlleleName hla={hla} href organ={organ} />
                     <span className="font-normal text-fg-subtle">×</span>
                     <Link
-                      href={`/complication/${encodeURIComponent(outcome)}`}
+                      href={withOrgan(`/complication/${encodeURIComponent(outcome)}`, organ)}
                       className="text-primary underline decoration-primary/30 underline-offset-[3px] hover:decoration-primary"
                     >
                       {label}

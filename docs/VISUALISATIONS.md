@@ -10,6 +10,12 @@ Captures : [`docs/screenshots/visualisations/`](screenshots/visualisations/)
 (bureau 1440 px et mobile 390 px, clair et sombre, avec interactions :
 survol, filtre, tri, recherche).
 
+> **Organes.** `/graph` et `/matrice` suivent l'organe choisi (`?organe=`) :
+> le graphe se recalcule sur la strate (voisinage, centre par défaut), la
+> matrice ne garde que les complications applicables à l'organe et signale les
+> paires multi-organes exclues. `/carte-v1` reste propre au rein, sélecteur
+> désactivé. Voir [`ORGANES.md`](ORGANES.md).
+
 ---
 
 ## 1. Règles communes

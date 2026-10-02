@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { AlleleName } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { formatInt } from "@/lib/format";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 import type { HlaEntity } from "@/lib/types";
 
 /**
@@ -40,13 +41,19 @@ export function hierarchyLabel(node: HlaEntity): string {
   return node.hla;
 }
 
-export function AlleleBreadcrumbTrail({ ancestry }: { ancestry: HlaEntity[] }) {
+export function AlleleBreadcrumbTrail({
+  ancestry,
+  organ = ALL_ORGANS,
+}: {
+  ancestry: HlaEntity[];
+  organ?: OrganSelection;
+}) {
   return (
     <nav aria-label="Hiérarchie de l'allèle" className="text-sm">
       <ol className="flex flex-wrap items-center gap-x-1 gap-y-1">
         <li>
           <Link
-            href="/allele"
+            href={withOrgan("/allele", organ)}
             className="rounded-md px-1 py-0.5 text-fg-muted hover:text-fg"
           >
             Allèles
@@ -74,7 +81,7 @@ export function AlleleBreadcrumbTrail({ ancestry }: { ancestry: HlaEntity[] }) {
                 </span>
               ) : (
                 <Link
-                  href={hierarchyHref(node)}
+                  href={withOrgan(hierarchyHref(node), organ)}
                   className={cn(
                     "rounded-md px-1 py-0.5 text-fg-muted hover:bg-fg/[0.05] hover:text-fg",
                     isAllele && "allele",
@@ -94,10 +101,12 @@ export function AlleleBreadcrumbTrail({ ancestry }: { ancestry: HlaEntity[] }) {
 function Chip({
   entity,
   count,
+  organ,
   current = false,
 }: {
   entity: HlaEntity;
   count: number;
+  organ: OrganSelection;
   current?: boolean;
 }) {
   if (current) {
@@ -113,7 +122,7 @@ function Chip({
   }
   return (
     <Link
-      href={hierarchyHref(entity)}
+      href={withOrgan(hierarchyHref(entity), organ)}
       className="inline-flex items-center gap-1.5 rounded-lg bg-surface px-2 py-1 text-xs text-fg ring-1 ring-inset ring-line transition-colors hover:bg-surface-muted hover:ring-line-strong"
     >
       <AlleleName hla={entity.hla} />
@@ -128,7 +137,9 @@ export function AlleleFamily({
   siblings,
   children,
   counts,
+  organ = ALL_ORGANS,
 }: {
+  organ?: OrganSelection;
   allele: HlaEntity;
   parent: HlaEntity | null;
   siblings: HlaEntity[];
@@ -147,7 +158,7 @@ export function AlleleFamily({
       {parentIsAllele ? (
         <div>
           <p className="eyebrow mb-1.5">Niveau supérieur</p>
-          <Chip entity={parent} count={n(parent)} />
+          <Chip entity={parent} count={n(parent)} organ={organ} />
         </div>
       ) : null}
 
@@ -163,7 +174,7 @@ export function AlleleFamily({
           <ul className="flex flex-wrap gap-1.5">
             {sameLevel.map((e) => (
               <li key={e.hla}>
-                <Chip entity={e} count={n(e)} current={e.hla === allele.hla} />
+                <Chip entity={e} count={n(e)} organ={organ} current={e.hla === allele.hla} />
               </li>
             ))}
           </ul>
@@ -176,7 +187,7 @@ export function AlleleFamily({
           <ul className="flex flex-wrap gap-1.5">
             {children.map((e) => (
               <li key={e.hla}>
-                <Chip entity={e} count={n(e)} />
+                <Chip entity={e} count={n(e)} organ={organ} />
               </li>
             ))}
           </ul>

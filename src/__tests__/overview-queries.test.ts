@@ -55,7 +55,7 @@ describe("getAssociationMatrix", () => {
     const expected = count(
       `SELECT COUNT(*) AS n FROM associations a
          JOIN hla_entities h ON h.hla = a.hla
-        WHERE h.resolution = '2-digit'`,
+        WHERE a.organ = 'all' AND h.resolution = '2-digit'`,
     );
     expect(m.cells.length).toBe(expected);
     // Le non significatif n'est pas masque.
@@ -90,7 +90,7 @@ describe("getAssociationMatrix", () => {
     const row = getDb()
       .prepare(
         `SELECT n_cooccurrence, signal_level, npmi FROM associations
-          WHERE hla = 'HLA-DQB1*02' AND outcome = 'DSA'`,
+          WHERE organ = 'all' AND hla = 'HLA-DQB1*02' AND outcome = 'DSA'`,
       )
       .get() as { n_cooccurrence: number; signal_level: string; npmi: number };
     expect(cell!.nCooccurrence).toBe(row.n_cooccurrence);
@@ -107,7 +107,7 @@ describe("getAssociationMatrix", () => {
       count(
         `SELECT COUNT(*) AS n FROM associations a
            JOIN hla_entities h ON h.hla = a.hla
-          WHERE h.resolution = '4-digit'`,
+          WHERE a.organ = 'all' AND h.resolution = '4-digit'`,
       ),
     );
   });
@@ -172,10 +172,15 @@ describe("getCorpusStats — compteurs etendus", () => {
     );
     const sum = Object.values(stats.associationsBySignal).reduce((a, b) => a + b, 0);
     expect(sum).toBe(stats.nAssociations);
-    expect(stats.nAssociations).toBe(count("SELECT COUNT(*) AS n FROM associations"));
+    expect(stats.nAssociations).toBe(
+      count("SELECT COUNT(*) AS n FROM associations WHERE organ = 'all'"),
+    );
     for (const level of SIGNAL_LEVELS) {
       expect(stats.associationsBySignal[level]).toBe(
-        count("SELECT COUNT(*) AS n FROM associations WHERE signal_level = ?", level),
+        count(
+          "SELECT COUNT(*) AS n FROM associations WHERE organ = 'all' AND signal_level = ?",
+          level,
+        ),
       );
     }
   });

@@ -12,6 +12,7 @@
  * cas.
  */
 
+import { ALL_ORGANS, ORGAN_PARAM, organSlug, withOrgan, type OrganSelection } from "./organ";
 import type { SignalLevel } from "./types";
 
 export const GRAPH_DEPTHS = [1, 2, 3] as const;
@@ -22,14 +23,23 @@ export interface GraphUrlState {
   depth?: number;
   /** Filtre serveur historique (avant parcours). Optionnel. */
   minSignal?: SignalLevel | "";
+  /** Strate d'organe (`?organe=coeur`) ; absente pour « tous les organes ». */
+  organ?: OrganSelection;
 }
 
 /** `/graph?center=…&depth=…` — chaine relative, prete pour `router.push`. */
-export function graphHref({ center, depth, minSignal }: GraphUrlState): string {
+export function graphHref({
+  center,
+  depth,
+  minSignal,
+  organ = ALL_ORGANS,
+}: GraphUrlState): string {
   const params = new URLSearchParams();
   params.set("center", center);
   if (depth !== undefined) params.set("depth", String(clampDepth(depth)));
   if (minSignal) params.set("minSignal", minSignal);
+  const slug = organSlug(organ);
+  if (slug) params.set(ORGAN_PARAM, slug);
   return `/graph?${params.toString()}`;
 }
 
@@ -42,8 +52,14 @@ export function clampDepth(raw: unknown): GraphDepth {
 }
 
 /** Lien vers la fiche d'un noeud (allele ou complication). */
-export function entityHref(type: "hla" | "outcome", id: string): string {
-  return type === "hla"
-    ? `/allele/${encodeURIComponent(id)}`
-    : `/complication/${encodeURIComponent(id)}`;
+export function entityHref(
+  type: "hla" | "outcome",
+  id: string,
+  organ: OrganSelection = ALL_ORGANS,
+): string {
+  const base =
+    type === "hla"
+      ? `/allele/${encodeURIComponent(id)}`
+      : `/complication/${encodeURIComponent(id)}`;
+  return withOrgan(base, organ);
 }

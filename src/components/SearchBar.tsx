@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Fragment,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -23,7 +24,19 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import {
+  ALL_ORGANS,
+  ORGAN_PARAM,
+  extractOrganHint,
+  organLabel,
+  organSlug,
+  withOrgan,
+  type OrganKey,
+  type OrganSelection,
+} from "@/lib/organ";
 import type { EntityType, SearchHit } from "@/lib/types";
+import { OrganChip } from "@/components/organ/OrganChip";
+import { useOrganSelection } from "@/components/organ/useOrganSelection";
 
 /**
  * Recherche avec autocompletion — Client Components.
@@ -40,6 +53,12 @@ import type { EntityType, SearchHit } from "@/lib/types";
  *
  * Debounce de 200 ms : la frappe d'un allele ("HLA-DQB1*02:01") produirait
  * autrement une requete par caractere.
+ *
+ * ORGANE. La recherche porte sur la strate courante (`organ`, lue dans l'URL
+ * par l'en-tete) : les effectifs affiches sont ceux de l'organe, et les
+ * resultats menent aux fiches EN CONSERVANT l'organe (`withOrgan`). Un mot
+ * d'organe saisi (« coeur », « foie », « GCSH ») est lu comme un filtre :
+ * « DR15 coeur » cherche DR15 dans les articles de cœur.
  */
 
 const DEBOUNCE_MS = 200;
@@ -98,7 +117,7 @@ function hrefFor(hit: SearchHit): string {
  * et n'en sait rien. C'est exactement le mode de defaillance que ce projet
  * existe pour eviter.
  */
-function useCorpusSearch(query: string) {
+function useCorpusSearch(query: string, organ: OrganSelection) {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -107,7 +126,10 @@ function useCorpusSearch(query: string) {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    const trimmed = query.trim();
+    // Un mot d'organe saisi est un filtre : « DR15 coeur » -> DR15 dans cœur.
+    const { organ: hinted, rest } = extractOrganHint(query);
+    const trimmed = rest.trim();
+    const slug = organSlug(hinted ?? organ);
     if (trimmed.length === 0) {
       abortRef.current?.abort();
       setHits([]);
@@ -122,7 +144,8 @@ function useCorpusSearch(query: string) {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      fetch(`/api/search?q=${encodeURIComponent(trimmed)}`, {
+      const organQuery = slug ? `&${ORGAN_PARAM}=${slug}` : "";
+      fetch(`/api/search?q=${encodeURIComponent(trimmed)}${organQuery}`, {
         signal: controller.signal,
       })
         .then((res) => {
@@ -148,9 +171,11 @@ function useCorpusSearch(query: string) {
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, organ]);
 
-  return { hits, pending, failed };
+  // Strate effectivement interrogee : le mot saisi l'emporte sur l'en-tete.
+  const hint = extractOrganHint(query).organ;
+  return { hits, pending, failed, hint, effectiveOrgan: (hint ?? organ) as OrganSelection };
 }
 
 /** Navigation clavier dans la liste : fleches, Entree. */
@@ -188,6 +213,10 @@ function SearchResults({
   active,
   onHover,
   onNavigate,
+  organ,
+  hint,
+  onApplyOrgan,
+  emptyText,
 }: {
   listId: string;
   hits: SearchHit[];
@@ -196,22 +225,52 @@ function SearchResults({
   active: number;
   onHover: (index: number) => void;
   onNavigate?: () => void;
+  /** Strate interrogee (organe de l'en-tete ou mot d'organe saisi). */
+  organ: OrganSelection;
+  /** Organe saisi dans la requete, s'il y en a un. */
+  hint: OrganKey | null;
+  onApplyOrgan?: (organ: OrganKey) => void;
+  /** Texte a la place de la liste quand la saisie n'est qu'un mot d'organe. */
+  emptyText?: string;
 }) {
   return (
     <>
       <p
         aria-live="polite"
-        className="flex items-center gap-2 border-b border-line px-4 py-2 text-xs text-fg-subtle"
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line px-4 py-2 text-xs text-fg-subtle"
       >
         {pending ? (
           <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
         ) : null}
-        {pending
-          ? "Recherche en cours…"
-          : failed
-            ? "Recherche indisponible"
-            : `${hits.length} résultat${hits.length > 1 ? "s" : ""}`}
+        <span>
+          {pending
+            ? "Recherche en cours…"
+            : failed
+              ? "Recherche indisponible"
+              : emptyText
+                ? "Filtre d'organe"
+                : `${hits.length} résultat${hits.length > 1 ? "s" : ""}`}
+        </span>
+        {organ !== ALL_ORGANS ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden="true">·</span>
+            <OrganChip organ={organ} size="xs" />
+          </span>
+        ) : null}
+        {hint && onApplyOrgan ? (
+          <button
+            type="button"
+            onClick={() => onApplyOrgan(hint)}
+            className="link ml-auto text-2xs"
+          >
+            Appliquer « {organLabel(hint)} » à tout le site
+          </button>
+        ) : null}
       </p>
+
+      {emptyText ? (
+        <p className="px-4 py-3 text-sm text-fg-muted">{emptyText}</p>
+      ) : null}
 
       {!pending && failed ? (
         <p role="alert" className="px-4 py-3 text-sm text-warn-soft-fg">
@@ -220,9 +279,10 @@ function SearchResults({
         </p>
       ) : null}
 
-      {!pending && !failed && hits.length === 0 ? (
+      {!pending && !failed && !emptyText && hits.length === 0 ? (
         <p className="px-4 py-3 text-sm text-fg-muted">
-          Aucune entrée du corpus ne correspond à cette recherche.
+          Aucune entrée du corpus ne correspond à cette recherche
+          {organ !== ALL_ORGANS ? ` dans ${organLabel(organ)}` : ""}.
         </p>
       ) : null}
 
@@ -248,7 +308,7 @@ function SearchResults({
                 aria-selected={selected}
               >
                 <Link
-                  href={hrefFor(hit)}
+                  href={withOrgan(hrefFor(hit), organ)}
                   tabIndex={-1}
                   onMouseMove={() => onHover(index)}
                   onClick={onNavigate}
@@ -325,14 +385,44 @@ const PLACEHOLDER =
  * cadrage ne peut plus etre recouvert ni depasse.
  */
 export function SearchBar({ className }: { className?: string } = {}) {
+  // `useSearchParams` exige une frontiere Suspense sur une page prerendue ;
+  // le repli est le meme champ, en strate « tous les organes ».
+  return (
+    <Suspense fallback={<SearchBarField className={className} organ={ALL_ORGANS} />}>
+      <SearchBarWithOrgan className={className} />
+    </Suspense>
+  );
+}
+
+function SearchBarWithOrgan({ className }: { className?: string }) {
+  return <SearchBarField className={className} organ={useOrganSelection()} />;
+}
+
+function SearchBarField({
+  className,
+  organ,
+}: {
+  className?: string;
+  organ: OrganSelection;
+}) {
   const router = useRouter();
+  const pathname = usePathname() ?? "/";
   const [query, setQuery] = useState("");
-  const { hits, pending, failed } = useCorpusSearch(query);
+  const { hits, pending, failed, hint, effectiveOrgan } = useCorpusSearch(query, organ);
   const listId = useId();
-  const pick = useCallback((hit: SearchHit) => router.push(hrefFor(hit)), [router]);
+  const pick = useCallback(
+    (hit: SearchHit) => router.push(withOrgan(hrefFor(hit), effectiveOrgan)),
+    [router, effectiveOrgan],
+  );
+  const applyOrgan = useCallback(
+    (picked: OrganKey) =>
+      router.push(withOrgan(`${pathname}${window.location.search}`, picked)),
+    [router, pathname],
+  );
   const { active, setActive, onKeyDown } = useActiveIndex(hits, pick);
 
   const showPanel = query.trim().length > 0;
+  const onlyOrganWord = hint !== null && extractOrganHint(query).rest.trim() === "";
 
   return (
     <div className={className}>
@@ -379,6 +469,14 @@ export function SearchBar({ className }: { className?: string } = {}) {
             failed={failed}
             active={active}
             onHover={setActive}
+            organ={effectiveOrgan}
+            hint={hint}
+            onApplyOrgan={applyOrgan}
+            emptyText={
+              onlyOrganWord
+                ? "Ajoutez un allèle, un sérotype ou une complication, ou appliquez ce filtre à tout le site."
+                : undefined
+            }
           />
         </div>
       ) : null}
@@ -419,15 +517,21 @@ const EXAMPLES = ["A*02", "DQB1*02:01", "DR15", "B27", "Cw7", "DRB1", "Rejet"];
  */
 export function SearchCommand({
   triggerClassName,
+  organ = ALL_ORGANS,
 }: {
   /** Classes du declencheur large (>= sm), typiquement sa largeur. */
   triggerClassName?: string;
+  /** Strate courante (lue dans l'URL par l'en-tete). */
+  organ?: OrganSelection;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const { hits, pending, failed } = useCorpusSearch(open ? query : "");
+  const { hits, pending, failed, hint, effectiveOrgan } = useCorpusSearch(
+    open ? query : "",
+    organ,
+  );
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -439,11 +543,19 @@ export function SearchCommand({
   const pick = useCallback(
     (hit: SearchHit) => {
       close();
-      router.push(hrefFor(hit));
+      router.push(withOrgan(hrefFor(hit), effectiveOrgan));
     },
-    [close, router],
+    [close, router, effectiveOrgan],
+  );
+  const applyOrgan = useCallback(
+    (picked: OrganKey) => {
+      close();
+      router.push(withOrgan(`${pathname ?? "/"}${window.location.search}`, picked));
+    },
+    [close, router, pathname],
   );
   const { active, setActive, onKeyDown } = useActiveIndex(hits, pick);
+  const onlyOrganWord = hint !== null && extractOrganHint(query).rest.trim() === "";
 
   // Raccourcis globaux.
   useEffect(() => {
@@ -561,6 +673,14 @@ export function SearchCommand({
                   active={active}
                   onHover={setActive}
                   onNavigate={close}
+                  organ={effectiveOrgan}
+                  hint={hint}
+                  onApplyOrgan={applyOrgan}
+                  emptyText={
+                    onlyOrganWord
+                      ? "Ajoutez un allèle, un sérotype ou une complication, ou appliquez ce filtre à tout le site."
+                      : undefined
+                  }
                 />
               ) : (
                 <div className="space-y-3 px-4 py-4">
@@ -588,7 +708,7 @@ export function SearchCommand({
                     {QUICK_LINKS.map((link) => (
                       <Link
                         key={link.href}
-                        href={link.href}
+                        href={withOrgan(link.href, organ)}
                         onClick={close}
                         className="rounded-full px-3 py-1 text-fg-muted ring-1 ring-inset ring-line hover:bg-primary-soft hover:text-primary-soft-fg"
                       >
@@ -599,7 +719,15 @@ export function SearchCommand({
                   <p className="text-2xs leading-relaxed text-fg-subtle">
                     Tolère la casse, les espaces et l&apos;absence de « * » ou
                     de « : » : « a02 », « DQB1 02 01 », « dr 15 » fonctionnent.
+                    Un mot d&apos;organe filtre la recherche : « DR15 cœur »,
+                    « rejet foie », « GCSH ».
                   </p>
+                  {organ !== ALL_ORGANS ? (
+                    <p className="flex items-center gap-1.5 text-2xs text-fg-subtle">
+                      Recherche dans :
+                      <OrganChip organ={organ} size="xs" full />
+                    </p>
+                  ) : null}
                 </div>
               )}
             </div>

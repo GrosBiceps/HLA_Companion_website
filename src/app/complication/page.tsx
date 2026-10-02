@@ -15,7 +15,21 @@ import { SIGNAL_DISPLAY } from "@/lib/signal";
 import { categoryClasses, categoryColor, categoryDisplay } from "@/lib/theme";
 import { cn } from "@/lib/cn";
 import { categoryAnchor, formatInt, plural } from "@/lib/format";
-import { getOutcomeCatalog, type OutcomeCatalogEntry } from "@/lib/queries";
+import { OrganStrip } from "@/components/organ/OrganChip";
+import {
+  getCorpusStats,
+  getOrgans,
+  getOutcomeCatalog,
+  type OutcomeCatalogEntry,
+} from "@/lib/queries";
+import {
+  ALL_ORGANS,
+  organFromSearchParams,
+  organLabel,
+  organShortLabel,
+  withOrgan,
+  type PageSearchParams,
+} from "@/lib/organ";
 
 /**
  * Index des complications — porte d'entree « Explorer par complication »
@@ -29,13 +43,19 @@ import { getOutcomeCatalog, type OutcomeCatalogEntry } from "@/lib/queries";
  * metrique.
  *
  * Les ancres `#cat-<categorie>` sont la cible du fil d'Ariane des fiches.
+ *
+ * ORGANE. `?organe=coeur` ne liste que les complications QUI S'APPLIQUENT a cet
+ * organe (vocabulaire : `OUTCOME_ORGANS`) et leurs effectifs sont ceux de la
+ * strate ; `?toutes=1` les liste toutes (celles d'autres organes, grisees,
+ * avec leur effectif dans la strate — souvent nul).
  */
 export const metadata: Metadata = {
   title: "Complications — index du corpus",
   description:
-    "Les complications de transplantation rénale du référentiel, par catégorie " +
-    "clinique, avec les allèles HLA co-mentionnés. Co-occurrences textuelles, " +
-    "pas des associations cliniques.",
+    "Les complications de transplantation du référentiel (rein, foie, cœur, " +
+    "poumon, GCSH, pancréas, intestin), par catégorie clinique, avec les " +
+    "allèles HLA co-mentionnés. Co-occurrences textuelles, pas des " +
+    "associations cliniques.",
 };
 
 function groupByCategory(entries: OutcomeCatalogEntry[]) {
@@ -55,19 +75,60 @@ function groupByCategory(entries: OutcomeCatalogEntry[]) {
   return ordered;
 }
 
-export default function ComplicationIndexPage() {
-  const catalog = getOutcomeCatalog(3);
+export default async function ComplicationIndexPage({
+  searchParams,
+}: {
+  searchParams?: PageSearchParams;
+} = {}) {
+  const sp = searchParams ? await searchParams : {};
+  const organ = organFromSearchParams(sp);
+  const showAll = organ === ALL_ORGANS || sp.toutes === "1";
+
+  const full = getOutcomeCatalog(3, organ);
+  const nOther = full.filter((c) => !c.relevant).length;
+  const catalog = showAll ? full : full.filter((c) => c.relevant);
   const groups = groupByCategory(catalog);
   const maxArticles = Math.max(1, ...catalog.map((c) => c.nArticles));
   const nMarked = catalog.reduce((s, c) => s + c.nMarked, 0);
+  const organs = getOrgans();
+  const baseHref = showAll && organ !== ALL_ORGANS ? "/complication?toutes=1" : "/complication";
+  const stratum = organs.find((o) => o.key === organ);
 
   return (
     <div className="space-y-8">
       <PageHeader
         eyebrow="Explorer par complication"
-        title="Complications de la transplantation rénale"
+        title={
+          organ === ALL_ORGANS
+            ? "Complications de la transplantation"
+            : `Complications : ${organShortLabel(organ)}`
+        }
         description="Le référentiel du pipeline, regroupé en catégories cliniques. Chaque fiche remonte vers les allèles mentionnés dans les mêmes articles."
       />
+
+      <OrganStrip
+        baseHref={baseHref}
+        selected={organ}
+        counts={Object.fromEntries(organs.map((o) => [o.key, o.nArticles]))}
+        allCount={getCorpusStats().nArticles}
+        stratum={{ nArticles: stratum?.nArticles, nTotal: getCorpusStats().nArticles }}
+        hint="Effectifs : articles de chaque organe. Une complication propre à un organe (rejet chronique du greffon pulmonaire, GVH…) n'apparaît que dans les organes concernés."
+      >
+        {nOther > 0 ? (
+          <Link
+            href={withOrgan(
+              showAll ? "/complication" : "/complication?toutes=1",
+              organ,
+            )}
+            className="link text-xs"
+          >
+            {showAll
+              ? `Ne montrer que celles de ${organShortLabel(organ)}`
+              : `Afficher aussi les ${nOther} complications d'autres organes`}
+          </Link>
+        ) : null}
+      </OrganStrip>
+
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile
@@ -158,6 +219,7 @@ export default function ComplicationIndexPage() {
                   className={cn(
                     cardClasses({ padding: "none" }),
                     "relative flex flex-col overflow-hidden",
+                    !o.relevant && "opacity-70",
                   )}
                 >
                   <span
@@ -167,12 +229,17 @@ export default function ComplicationIndexPage() {
                   />
                   <div className="flex-1 space-y-3 px-4 py-3.5 pl-5">
                     <Link
-                      href={`/complication/${encodeURIComponent(o.outcome)}`}
+                      href={withOrgan(`/complication/${encodeURIComponent(o.outcome)}`, organ)}
                       className="block font-semibold leading-snug text-fg after:absolute after:inset-0 after:content-[''] hover:text-primary"
                     >
                       {/* Libelle clinique de la base, jamais la cle. */}
                       {o.label}
                     </Link>
+                    {!o.relevant ? (
+                      <p className="text-2xs text-fg-subtle">
+                        Ne s&apos;applique pas à {organLabel(organ)}
+                      </p>
+                    ) : null}
                     <div>
                       <p className="flex items-baseline justify-between text-xs text-fg-muted">
                         <span className="tabular">
@@ -202,7 +269,7 @@ export default function ComplicationIndexPage() {
                           {o.topAlleles.map((t) => (
                             <li key={t.hla}>
                               <Link
-                                href={`/allele/${encodeURIComponent(t.hla)}`}
+                                href={withOrgan(`/allele/${encodeURIComponent(t.hla)}`, organ)}
                                 title={`${t.hla} — ${plural(t.nCooccurrence, "article")} — ${SIGNAL_DISPLAY[t.signalLevel].label}`}
                                 className="inline-flex items-center gap-1.5 rounded-md bg-surface-muted px-1.5 py-0.5 text-xs text-fg ring-1 ring-inset ring-line hover:ring-line-strong"
                               >

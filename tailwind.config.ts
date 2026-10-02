@@ -97,11 +97,24 @@ const config: Config = {
           neoplasie: v("cat-neoplasie"),
           metabolique: v("cat-metabolique"),
           recidive: v("cat-recidive"),
+          gvh: v("cat-gvh"),
+          survie: v("cat-survie"),
           other: v("cat-other"),
         },
         hla: {
           "class-1": v("hla-class-1"),
           "class-2": v("hla-class-2"),
+        },
+        // ── Organes (7 teintes + neutre « tous ») ──────────────────────
+        organ: {
+          all: v("organ-all"),
+          kidney: v("organ-kidney"),
+          liver: v("organ-liver"),
+          heart: v("organ-heart"),
+          lung: v("organ-lung"),
+          hsct: v("organ-hsct"),
+          pancreas: v("organ-pancreas"),
+          intestine: v("organ-intestine"),
         },
         // ── Surlignage des spans extraits ──────────────────────────────
         mark: {

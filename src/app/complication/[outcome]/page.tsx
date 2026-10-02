@@ -17,6 +17,9 @@ import {
   Section,
   StatTile,
 } from "@/components/ui";
+import { OrganBreakdown } from "@/components/organ/OrganBreakdown";
+import { OrganBadges } from "@/components/organ/OrganChip";
+import { OrganScopeNote } from "@/components/organ/OrganScope";
 import { ArticleSummaryList } from "@/components/entity/ArticleSummaryList";
 import { BarList } from "@/components/entity/BarList";
 import { CompactAssociationList } from "@/components/entity/CompactAssociationList";
@@ -37,11 +40,23 @@ import {
 import {
   getAllHlaEntities,
   getAssociationsForOutcome,
+  getCorpusStats,
+  getOrgans,
   getOutcome,
   getOutcomeArticleCount,
+  getOutcomeOrganCounts,
   getOutcomeYearCounts,
   getTopArticlesForOutcome,
 } from "@/lib/queries";
+import { OUTCOME_ORGANS } from "@/lib/labels";
+import {
+  ALL_ORGANS,
+  organFromPage,
+  organLabel,
+  organShortLabel,
+  withOrgan,
+  type PageSearchParams,
+} from "@/lib/organ";
 import type { AssociationRow, HlaEntity } from "@/lib/types";
 import { LOCUS_ORDER as LOCI_ORDER } from "@/lib/loci";
 
@@ -69,9 +84,17 @@ import { LOCUS_ORDER as LOCI_ORDER } from "@/lib/loci";
  * tiroir. Aucune metrique ne fuit hors de son depliant.
  *
  * ENCODAGE. On decode defensivement comme la fiche allele.
+ *
+ * ORGANE. `?organe=foie` recalcule la fiche sur la strate (associations avec
+ * leur denominateur, effectifs, chronologie, articles). Les puces « Organes
+ * concernés » viennent du VOCABULAIRE (`OUTCOME_ORGANS` : le BOS n'existe
+ * qu'apres une greffe pulmonaire) ; la carte « Par organe » compte les
+ * articles du corpus. Choisir un organe auquel la complication ne s'applique
+ * pas est dit, pas masque.
  */
 
 type Params = { params: Promise<{ outcome: string }> };
+type Props = Params & { searchParams?: PageSearchParams };
 
 /** Decodage tolerant : une sequence percent invalide ne doit pas lever. */
 function safeDecode(raw: string): string {
@@ -141,24 +164,38 @@ function groupByLocus(
   );
 }
 
-export default async function OutcomePage({ params }: Params) {
+export default async function OutcomePage({ params, searchParams }: Props) {
   const key = safeDecode((await params).outcome);
+  const organ = await organFromPage(searchParams);
 
   const outcome = getOutcome(key);
   if (!outcome) notFound();
 
-  const associations = getAssociationsForOutcome(key);
+  const associations = getAssociationsForOutcome(key, organ);
   const entities = new Map(getAllHlaEntities().map((e) => [e.hla, e]));
   const groups = groupByLocus(associations, entities);
-  const years = getOutcomeYearCounts(key);
+  const years = getOutcomeYearCounts(key, organ);
   const span = activeYears(years);
-  const nArticles = getOutcomeArticleCount(key);
-  const topArticles = getTopArticlesForOutcome(key, 6);
+  const nArticles = getOutcomeArticleCount(key, organ);
+  const topArticles = getTopArticlesForOutcome(key, 6, organ);
   const marked = associations.filter((a) => a.isSignificant);
   const nInverse = associations.filter(
     (a) => a.signalLevel === "inverse",
   ).length;
-  const graphHref = `/graph?center=${encodeURIComponent(key)}`;
+  const baseHref = `/complication/${encodeURIComponent(key)}`;
+  const graphHref = withOrgan(`/graph?center=${encodeURIComponent(key)}`, organ);
+  const organCounts = getOutcomeOrganCounts(key);
+  const appliesTo = OUTCOME_ORGANS[key] ?? [];
+  const stratum = getOrgans().find((o) => o.key === organ);
+  const notApplicable = organ !== ALL_ORGANS && !appliesTo.includes(organ);
+  const breakdown = (
+    <OrganBreakdown
+      counts={organCounts}
+      selected={organ}
+      hrefFor={(o) => withOrgan(baseHref, o)}
+      total={getOutcomeArticleCount(key)}
+    />
+  );
 
   const strip: StripGroup[] = groups.map((g) => ({
     key: g.key,
@@ -181,14 +218,17 @@ export default async function OutcomePage({ params }: Params) {
     <div className="space-y-8 sm:space-y-10">
       <div className="space-y-4">
         <nav aria-label="Fil d'Ariane" className="text-sm">
-          <Link href="/complication" className="text-fg-muted hover:text-fg">
+          <Link
+            href={withOrgan("/complication", organ)}
+            className="text-fg-muted hover:text-fg"
+          >
             Complications
           </Link>
           <span aria-hidden="true" className="px-1.5 text-fg-faint">
             ›
           </span>
           <Link
-            href={`/complication#${categoryAnchor(outcome.category)}`}
+            href={withOrgan(`/complication#${categoryAnchor(outcome.category)}`, organ)}
             className="text-fg-muted hover:text-fg"
           >
             {categoryDisplay(outcome.category)}
@@ -207,6 +247,14 @@ export default async function OutcomePage({ params }: Params) {
           meta={
             <>
               <CategoryBadge category={outcome.category} />
+              <span className="inline-flex items-center gap-1.5 text-xs text-fg-subtle">
+                S&apos;applique à :
+                <OrganBadges
+                  organs={appliesTo}
+                  selected={organ}
+                  hrefFor={(o) => withOrgan(baseHref, o)}
+                />
+              </span>
               {span ? (
                 <Badge tone="outline">
                   {span.first === span.last
@@ -230,7 +278,7 @@ export default async function OutcomePage({ params }: Params) {
             <strong className="tabular font-semibold text-fg">
               {plural(nArticles, "article")}
             </strong>{" "}
-            du corpus
+            {organ === ALL_ORGANS ? "du corpus" : `de la strate ${organShortLabel(organ)}`}
             {associations.length > 0 ? (
               <>
                 , co-mentionnée avec{" "}
@@ -245,6 +293,24 @@ export default async function OutcomePage({ params }: Params) {
           </p>
         </PageHeader>
       </div>
+
+      <OrganScopeNote
+        organ={organ}
+        nArticles={stratum?.nArticles}
+        nTotal={getCorpusStats().nArticles}
+        baseHref={baseHref}
+      />
+
+      {notApplicable ? (
+        <Callout tone="info" title="Cette complication ne concerne pas cet organe">
+          <p>
+            Dans le vocabulaire du site, « {outcome.label} » ne s&apos;applique
+            pas à {organLabel(organ)}. Si des articles la mentionnent quand même
+            dans cette strate (article concernant deux organes, par exemple),
+            ils sont comptés ci-dessous, sans rien masquer.
+          </p>
+        </Callout>
+      ) : null}
 
       <Callout
         tone="framing"
@@ -294,10 +360,17 @@ export default async function OutcomePage({ params }: Params) {
       </div>
 
       {associations.length === 0 ? (
-        <EmptyState
-          title="Aucun allèle co-mentionné"
-          description="Aucun allèle n'est co-mentionné avec cette complication dans ce corpus. Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée telle qu'elle a été extraite."
-        />
+        <>
+          <EmptyState
+            title="Aucun allèle co-mentionné"
+            description={
+              organ === ALL_ORGANS
+                ? "Aucun allèle n'est co-mentionné avec cette complication dans ce corpus. Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée telle qu'elle a été extraite."
+                : `Aucun allèle n'est co-mentionné avec cette complication dans la strate « ${organLabel(organ)} ». Ce n'est pas un résultat sur la clinique : c'est l'état de la littérature indexée pour cet organe — la répartition ci-dessous montre où elle apparaît.`
+            }
+          />
+          <div className="max-w-sm">{breakdown}</div>
+        </>
       ) : (
         <>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -308,11 +381,12 @@ export default async function OutcomePage({ params }: Params) {
                 description="Un point par allèle. Position : nombre d'articles. Teinte : niveau de signal. Un point mène à la fiche de l'allèle."
               />
               <div className="mt-5">
-                <LocusStripChart groups={strip} />
+                <LocusStripChart groups={strip} organ={organ} />
               </div>
             </Card>
 
             <div className="space-y-6">
+              {breakdown}
               <Card>
                 <CardHeader eyebrow="Chronologie" title="Articles par année" />
                 <div className="mt-4">
@@ -335,7 +409,7 @@ export default async function OutcomePage({ params }: Params) {
                     unit="art."
                     items={topMarked.map((r) => ({
                       key: r.hla,
-                      href: `/allele/${encodeURIComponent(r.hla)}`,
+                      href: withOrgan(`/allele/${encodeURIComponent(r.hla)}`, organ),
                       value: r.nCooccurrence,
                       color: SIGNAL_COLORS[r.signalLevel].css,
                       title: `${r.hla} — ${SIGNAL_DISPLAY[r.signalLevel].label}`,
@@ -398,11 +472,12 @@ export default async function OutcomePage({ params }: Params) {
                       <AssociationCard
                         key={row.hla}
                         association={row}
-                        title={<AlleleName hla={row.hla} href />}
+                        title={<AlleleName hla={row.hla} href organ={organ} />}
+                        organ={organ}
                       />
                     ))}
                     {weak.length > 0 ? (
-                      <CompactAssociationList rows={weak} show="hla" />
+                      <CompactAssociationList rows={weak} show="hla" organ={organ} />
                     ) : null}
                   </div>
                 );
@@ -415,7 +490,11 @@ export default async function OutcomePage({ params }: Params) {
               title="Articles les plus riches en co-mentions"
               description="Classés par nombre de phrases où cette complication apparaît avec un allèle. Chaque fiche article montre ces phrases, surlignées."
             >
-              <ArticleSummaryList articles={topArticles} partnerUnit="allèle" />
+              <ArticleSummaryList
+                articles={topArticles}
+                partnerUnit="allèle"
+                organ={organ}
+              />
             </Section>
           ) : null}
 

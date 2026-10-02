@@ -5,6 +5,17 @@ les décisions prises en cours de route.
 
 ---
 
+## Corpus multi-organe (02/10/2026)
+
+Le site couvre désormais sept organes (rein, foie, cœur, poumon, GCSH,
+pancréas, intestin) : 7 000 articles, 46 complications, base de 37,3 Mo.
+Les statistiques sont recalculées par strate d'organe (dénominateur propre) ;
+l'organe voyage dans l'URL (`?organe=`). Détails, décisions et points ouverts :
+[`ORGANES.md`](ORGANES.md). Les chiffres d'extraction (précision, κ) restent
+mesurés sur le rein seul ; `/carte-v1` reste propre au rein.
+
+---
+
 ## Vocabulaire allélique et sérotypes (02/10/2026)
 
 Le vocabulaire HLA du générateur passe à des noms IPD-IMGT réalistes

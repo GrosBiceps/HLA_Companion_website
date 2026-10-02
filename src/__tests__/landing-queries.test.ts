@@ -43,7 +43,7 @@ describe("getSignalHighlights", () => {
   it("couvre exactement les paires fortes et nettes des alleles", () => {
     const expected = count(
       `SELECT COUNT(*) AS n FROM associations a JOIN hla_entities h ON h.hla = a.hla
-        WHERE a.signal_level IN ('strong','clear')
+        WHERE a.organ = 'all' AND a.signal_level IN ('strong','clear')
           AND h.resolution IN ('2-digit','4-digit')`,
     );
     expect(getSignalHighlights({ limit: 10_000 }).length).toBe(expected);
@@ -59,7 +59,8 @@ describe("getSignalHighlights", () => {
     expect(inv.length).toBe(
       count(
         `SELECT COUNT(*) AS n FROM associations a JOIN hla_entities h ON h.hla = a.hla
-          WHERE a.signal_level = 'inverse' AND h.resolution = '2-digit'`,
+          WHERE a.organ = 'all' AND a.signal_level = 'inverse'
+            AND h.resolution = '2-digit'`,
       ),
     );
     expect(inv.every((r) => r.signalLevel === "inverse" && r.resolution === "2-digit")).toBe(true);

@@ -19,6 +19,14 @@
  * des qu'elles divergent. La peremption s'annonce donc d'elle-meme, au lieu de
  * passer inapercue.
  *
+ * PERIMETRE : ORGANE. Ces chiffres ont ete mesures sur le corpus REIN
+ * uniquement (la seule etude reelle disponible). Les autres organes du site
+ * (foie, coeur, poumon, GCSH, pancreas, intestin) sont des valeurs de
+ * remplissage synthetiques : leur qualite d'extraction n'est pas mesuree.
+ * `scopeLabel` et `scopeNote` le disent ; `errorRatePhrase` porte le
+ * perimetre dans la phrase meme, pour qu'il voyage avec elle partout ou elle
+ * est reprise (accueil, pied de page, encart, methode).
+ *
  * POUR METTRE A JOUR : remesurer sur le nouveau corpus, remplacer les trois
  * valeurs ET `measuredAgainstCorpus`, puis mettre a jour les chaines attendues
  * dans `src/__tests__/epistemic.test.tsx` (le test lit ce module, mais il
@@ -32,8 +40,12 @@ export interface ExtractionMetrics {
   negationKappa: string;
   /** Glose qualitative du kappa. */
   negationKappaGloss: string;
-  /** Taux d'erreur exprime en langage clinique. */
+  /** Taux d'erreur exprime en langage clinique (perimetre inclus). */
   errorRatePhrase: string;
+  /** Perimetre de la mesure, en peu de mots : « corpus rein ». */
+  scopeLabel: string;
+  /** Perimetre de la mesure, en une phrase, et statut des autres organes. */
+  scopeNote: string;
   /**
    * Version de corpus contre laquelle ces chiffres ont ete mesures.
    * Comparee a `CorpusVersion.version` au rendu ; toute divergence declenche
@@ -46,7 +58,10 @@ export const EXTRACTION_METRICS: ExtractionMetrics = {
   precisionPct: "78,75 %",
   negationKappa: "0,44",
   negationKappaGloss: "modéré",
-  errorRatePhrase: "~1 mention sur 5 est erronée",
+  errorRatePhrase: "~1 mention sur 5 est erronée (mesuré sur le corpus rein)",
+  scopeLabel: "corpus rein",
+  scopeNote:
+    "Ces chiffres ont été mesurés sur le corpus rein uniquement. Pour les autres organes, ce sont des valeurs de remplissage synthétiques : la qualité d'extraction n'y est pas encore mesurée.",
   measuredAgainstCorpus: "A-synthetic",
 };
 

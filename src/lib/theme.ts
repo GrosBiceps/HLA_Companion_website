@@ -20,6 +20,7 @@
 
 import type { SignalLevel } from "./types";
 import { CATEGORIES, type Category } from "./labels";
+import type { OrganKey, OrganSelection } from "./organ";
 
 export interface ThemeColor {
   /** Nom de la variable CSS, sans `--`. */
@@ -128,6 +129,8 @@ export const CATEGORY_COLORS: Record<Category, ThemeColor> = {
   Neoplasie: color("cat-neoplasie", "#C0508F", "#E27DB6"),
   Metabolique: color("cat-metabolique", "#C29318", "#E2B73F"),
   Recidive: color("cat-recidive", "#8C6A4E", "#C09A7A"),
+  "Greffon contre hote": color("cat-gvh", "#6F9A1F", "#A9D04A"),
+  Survie: color("cat-survie", "#5F7A8A", "#9DB5C4"),
 };
 
 /** Repli pour une categorie inconnue de `CATEGORIES` (referentiel elargi). */
@@ -155,6 +158,8 @@ export const CATEGORY_CLASSES: Record<Category, { bg: string; text: string }> =
     Neoplasie: { bg: "bg-cat-neoplasie", text: "text-cat-neoplasie" },
     Metabolique: { bg: "bg-cat-metabolique", text: "text-cat-metabolique" },
     Recidive: { bg: "bg-cat-recidive", text: "text-cat-recidive" },
+    "Greffon contre hote": { bg: "bg-cat-gvh", text: "text-cat-gvh" },
+    Survie: { bg: "bg-cat-survie", text: "text-cat-survie" },
   };
 
 export function categoryClasses(category: string | null | undefined): {
@@ -181,6 +186,8 @@ export const CATEGORY_DISPLAY: Record<Category, string> = {
   Neoplasie: "Néoplasie",
   Metabolique: "Métabolique",
   Recidive: "Récidive",
+  "Greffon contre hote": "Greffon contre hôte",
+  Survie: "Survie du patient",
 };
 
 export function categoryDisplay(category: string): string {
@@ -188,6 +195,108 @@ export function categoryDisplay(category: string): string {
 }
 
 export { CATEGORIES };
+
+// ── Organes ────────────────────────────────────────────────────────────────
+
+/**
+ * Echelle CATEGORIELLE des sept organes. Choisie dans la famille « muted » de
+ * Paul Tol (sure en daltonisme), eclaircie en sombre. Elle cohabite avec
+ * l'echelle de signal (bleus + orange) et celle des categories cliniques : une
+ * couleur d'organe n'est donc JAMAIS seule — elle accompagne toujours le
+ * libelle (`OrganChip`) et une FORME propre a l'organe (`OrganMark`,
+ * `ORGAN_SHAPES`), si bien que deux organes de teinte voisine restent
+ * distinguables.
+ *
+ * Les jetons CSS `--organ-*` sont dans le bloc « Organes » de globals.css.
+ */
+export const ORGAN_COLORS: Record<OrganKey, ThemeColor> = {
+  kidney: color("organ-kidney", "#B04A5E", "#E58C9D"),
+  liver: color("organ-liver", "#A8861C", "#E3CE72"),
+  heart: color("organ-heart", "#8A1F55", "#D86AA6"),
+  lung: color("organ-lung", "#3C8DBE", "#8CCBF0"),
+  hsct: color("organ-hsct", "#8B3F94", "#C98AD0"),
+  pancreas: color("organ-pancreas", "#7A7F1F", "#BEC450"),
+  intestine: color("organ-intestine", "#2A8C7C", "#5CC5B3"),
+};
+
+/** Neutre de la strate « tous les organes ». */
+export const ORGAN_ALL_COLOR: ThemeColor = color("organ-all", "#64697C", "#8B91A3");
+
+/** Couleur d'une strate (organe, ou neutre pour « tous les organes »). */
+export function organColor(selection: OrganSelection): ThemeColor {
+  return selection === "all" ? ORGAN_ALL_COLOR : ORGAN_COLORS[selection];
+}
+
+/** Classes Tailwind statiques (le JIT doit les voir ecrites en entier). */
+export const ORGAN_CLASSES: Record<
+  OrganSelection,
+  { bg: string; text: string; border: string; soft: string }
+> = {
+  all: {
+    bg: "bg-organ-all",
+    text: "text-organ-all",
+    border: "border-organ-all",
+    soft: "bg-organ-all/10",
+  },
+  kidney: {
+    bg: "bg-organ-kidney",
+    text: "text-organ-kidney",
+    border: "border-organ-kidney",
+    soft: "bg-organ-kidney/10",
+  },
+  liver: {
+    bg: "bg-organ-liver",
+    text: "text-organ-liver",
+    border: "border-organ-liver",
+    soft: "bg-organ-liver/10",
+  },
+  heart: {
+    bg: "bg-organ-heart",
+    text: "text-organ-heart",
+    border: "border-organ-heart",
+    soft: "bg-organ-heart/10",
+  },
+  lung: {
+    bg: "bg-organ-lung",
+    text: "text-organ-lung",
+    border: "border-organ-lung",
+    soft: "bg-organ-lung/10",
+  },
+  hsct: {
+    bg: "bg-organ-hsct",
+    text: "text-organ-hsct",
+    border: "border-organ-hsct",
+    soft: "bg-organ-hsct/10",
+  },
+  pancreas: {
+    bg: "bg-organ-pancreas",
+    text: "text-organ-pancreas",
+    border: "border-organ-pancreas",
+    soft: "bg-organ-pancreas/10",
+  },
+  intestine: {
+    bg: "bg-organ-intestine",
+    text: "text-organ-intestine",
+    border: "border-organ-intestine",
+    soft: "bg-organ-intestine/10",
+  },
+};
+
+/**
+ * Forme de la pastille de chaque organe (jeu de sept formes distinctes) :
+ * double codage couleur + forme, pour les lecteurs daltoniens et l'impression
+ * en niveaux de gris. `all` est un anneau.
+ */
+export const ORGAN_SHAPES: Record<OrganSelection, string> = {
+  all: "ring",
+  kidney: "circle",
+  liver: "square",
+  heart: "diamond",
+  lung: "triangle",
+  hsct: "hexagon",
+  pancreas: "pentagon",
+  intestine: "bar",
+};
 
 // ── Classes HLA ────────────────────────────────────────────────────────────
 

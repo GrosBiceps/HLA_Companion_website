@@ -31,6 +31,10 @@ import { cn } from "@/lib/cn";
  * `data/legacy/carte_v1_renal.json` (cf. `src/lib/legacy-map.ts`). Le rendu
  * interactif est client (`LegacyMapClient`) ; le tableau des paires est rendu
  * cote serveur et sert d'alternative accessible au reseau.
+ *
+ * ORGANE : REIN SEUL. Cette carte est celle d'une etude reelle sur la greffe
+ * RENALE ; elle n'a pas de strate d'organe. Le selecteur d'organe de l'en-tete
+ * est donc desactive ici (cf. `OrganSelector`) et la page le dit.
  */
 export const metadata: Metadata = {
   title: "Carte v1 — co-occurrences textuelles (étude antérieure)",
@@ -52,11 +56,14 @@ export default function CarteV1Page() {
     <div className="space-y-8">
       <PageHeader
         eyebrow="Étude antérieure · données réelles"
-        title="Carte v1 — greffe rénale"
+        title="Carte v1 — rein"
         description="La carte des co-mentions entre libellés HLA et complications produite par la première étude bibliométrique, présentée telle qu'exportée : mêmes libellés, mêmes liens, disposition d'origine."
         meta={
           <>
             <Badge tone="accent">Données réelles</Badge>
+            <Badge tone="primary" title="Cette carte ne concerne que la greffe rénale">
+              Organe : rein
+            </Badge>
             <Badge tone="outline">Export Gephi · 80 nœuds</Badge>
           </>
         }
@@ -71,6 +78,12 @@ export default function CarteV1Page() {
             </a>
             ), et non le corpus synthétique du reste du site : le bandeau
             « données synthétiques » ne concerne pas cette page.
+          </li>
+          <li>
+            <strong>Organe : rein uniquement.</strong> Cette carte est celle de
+            la greffe rénale. Le sélecteur d&apos;organe de l&apos;en-tête ne
+            s&apos;y applique pas : il n&apos;existe pas de version de cette
+            carte pour les autres organes.
           </li>
           <li>
             Le poids d&apos;un lien est un <strong>compte brut</strong> : le

@@ -19,6 +19,7 @@ import { SignalIndicator } from "@/components/SignalIndicator";
 import { FilterChips } from "./FilterChips";
 import { SignalSwatch } from "./SignalSwatch";
 import { cn } from "@/lib/cn";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 import type { SignalLevel } from "@/lib/types";
 
 /**
@@ -52,6 +53,8 @@ interface TipState {
 
 export function MatrixHeatmap({ matrix }: { matrix: ClientMatrix }) {
   const router = useRouter();
+  // Strate de la matrice : reportee sur tous les liens et changements de vue.
+  const organ = matrix.organ ?? ALL_ORGANS;
   const [isPending, startTransition] = useTransition();
   const [sort, setSort] = useState<MatrixSort>("locus");
   const [levels, setLevels] = useState<Set<SignalLevel>>(() => new Set(ALL_LEVELS));
@@ -120,12 +123,13 @@ export function MatrixHeatmap({ matrix }: { matrix: ClientMatrix }) {
               columns={view.columns}
               maxCount={view.maxCount}
               maxMentions={maxMentions}
+              organ={organ}
             />
           );
         })}
       </tbody>
     ));
-  }, [view, nCols, maxMentions]);
+  }, [view, nCols, maxMentions, organ]);
 
   // ── Infobulle (delegation d'evenements) ──
   const showTipFor = (target: EventTarget | null) => {
@@ -178,9 +182,13 @@ export function MatrixHeatmap({ matrix }: { matrix: ClientMatrix }) {
               value={matrix.resolution}
               onChange={(v) =>
                 startTransition(() => {
-                  router.push(v === "2-digit" ? "/matrice" : "/matrice?resolution=4-digit", {
-                    scroll: false,
-                  });
+                  router.push(
+                    withOrgan(
+                      v === "2-digit" ? "/matrice" : "/matrice?resolution=4-digit",
+                      organ,
+                    ),
+                    { scroll: false },
+                  );
                 })
               }
             />
@@ -198,9 +206,13 @@ export function MatrixHeatmap({ matrix }: { matrix: ClientMatrix }) {
                 value={matrix.locus ?? ""}
                 onChange={(v) =>
                   startTransition(() => {
-                    router.push(`/matrice?resolution=4-digit&locus=${encodeURIComponent(v)}`, {
-                      scroll: false,
-                    });
+                    router.push(
+                      withOrgan(
+                        `/matrice?resolution=4-digit&locus=${encodeURIComponent(v)}`,
+                        organ,
+                      ),
+                      { scroll: false },
+                    );
                   })
                 }
               />
@@ -332,7 +344,7 @@ export function MatrixHeatmap({ matrix }: { matrix: ClientMatrix }) {
                 >
                   <div className="relative h-[150px] w-full">
                     <Link
-                      href={`/complication/${encodeURIComponent(o.outcome)}`}
+                      href={withOrgan(`/complication/${encodeURIComponent(o.outcome)}`, organ)}
                       title={`${o.label} — ${categoryDisplay(o.category)}`}
                       className="absolute bottom-2 left-1/2 block w-max max-w-[170px] origin-left -rotate-[58deg] truncate whitespace-nowrap text-2xs text-fg-muted hover:text-primary"
                     >
@@ -403,14 +415,16 @@ function MatrixRow({
   columns,
   maxCount,
   maxMentions,
+  organ,
 }: {
+  organ: OrganSelection;
   row: MatrixRowView;
   r: number;
   columns: ClientMatrix["outcomes"];
   maxCount: number;
   maxMentions: number;
 }) {
-  const href = `/allele/${encodeURIComponent(row.allele.hla)}`;
+  const href = withOrgan(`/allele/${encodeURIComponent(row.allele.hla)}`, organ);
   const bar = Math.max(4, Math.round((row.allele.nMentions / maxMentions) * 100));
   return (
     <tr data-row={r}>
@@ -418,7 +432,7 @@ function MatrixRow({
         scope="row"
         className="sticky left-0 z-10 border-r border-line bg-surface px-2 py-0 text-left font-normal sm:px-3"
       >
-        <Link href={href} className="group block py-[3px]" title={`${row.allele.nMentions} mentions dans le corpus`}>
+        <Link href={href} className="group block py-[3px]" title={`${row.allele.nMentions} mentions dans ${organ === ALL_ORGANS ? "le corpus" : "la strate"}`}>
           <span className="allele block text-[0.75rem] leading-tight text-fg group-hover:text-primary">
             {row.allele.hla}
           </span>

@@ -5,10 +5,14 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 import { NAV_ITEMS, isActive } from "./nav";
 
-/** Navigation horizontale (>= lg). Etat actif par chemin courant. */
-export function NavLinks() {
+/**
+ * Navigation horizontale (>= lg). Etat actif par chemin courant. Chaque lien
+ * reporte la strate d'organe courante (`withOrgan`).
+ */
+export function NavLinks({ organ = ALL_ORGANS }: { organ?: OrganSelection }) {
   const pathname = usePathname() ?? "/";
   return (
     <nav aria-label="Navigation principale" className="hidden lg:block">
@@ -18,7 +22,7 @@ export function NavLinks() {
           return (
             <li key={item.href}>
               <Link
-                href={item.href}
+                href={withOrgan(item.href, organ)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   "relative inline-flex h-9 items-center whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors",
@@ -48,7 +52,7 @@ export function NavLinks() {
  * Menu mobile (< lg) : bouton hamburger + panneau deroulant sous l'en-tete.
  * Se referme a chaque navigation et sur Echap.
  */
-export function MobileNav() {
+export function MobileNav({ organ = ALL_ORGANS }: { organ?: OrganSelection }) {
   const pathname = usePathname() ?? "/";
   const [open, setOpen] = useState(false);
 
@@ -92,7 +96,7 @@ export function MobileNav() {
               return (
                 <li key={item.href}>
                   <Link
-                    href={item.href}
+                    href={withOrgan(item.href, organ)}
                     aria-current={active ? "page" : undefined}
                     className={cn(
                       "flex flex-col rounded-lg px-3 py-2.5",

@@ -6,6 +6,8 @@ import {
   CATEGORY_FALLBACK,
   CHART_NEUTRALS,
   HLA_CLASS_COLORS,
+  ORGAN_ALL_COLOR,
+  ORGAN_COLORS,
   SIGNAL_COLORS,
   hlaClassFromKey,
   type ThemeColor,
@@ -52,6 +54,8 @@ const ALL: ThemeColor[] = [
   ...Object.values(CATEGORY_COLORS),
   CATEGORY_FALLBACK,
   ...Object.values(HLA_CLASS_COLORS),
+  ...Object.values(ORGAN_COLORS),
+  ORGAN_ALL_COLOR,
   ...Object.values(CHART_NEUTRALS),
 ];
 
@@ -65,9 +69,10 @@ describe("jetons de couleur", () => {
     },
   );
 
-  it("couvre les cinq niveaux de signal et les sept categories", () => {
+  it("couvre les cinq niveaux de signal, toutes les categories et les sept organes", () => {
     for (const level of SIGNAL_LEVELS) expect(SIGNAL_COLORS[level]).toBeDefined();
     for (const cat of CATEGORIES) expect(CATEGORY_COLORS[cat]).toBeDefined();
+    expect(Object.keys(ORGAN_COLORS)).toHaveLength(7);
   });
 
   it("l'echelle de signal est monotone en luminance dans les deux themes", () => {

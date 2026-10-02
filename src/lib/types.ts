@@ -15,7 +15,12 @@ export type SignalLevel =
 
 export type Polarity = "positive" | "negated";
 
-export type EntityType = "allele" | "outcome" | "article" | "author";
+export type EntityType =
+  | "allele"
+  | "serotype"
+  | "outcome"
+  | "article"
+  | "author";
 
 export interface CorpusVersion {
   version: string;
@@ -106,6 +111,21 @@ export interface SearchHit {
   entityType: EntityType;
   entityId: string;
   label: string;
+  /**
+   * Badge de resolution : « Locus », « 2-digit », « 4-digit » pour un allele ;
+   * « Sérotype », « Famille large », « Associé », « Cellulaire » pour un
+   * serotype. Absent pour les autres types.
+   */
+  badge?: string;
+  /** Ligne secondaire (effectifs, correspondance). */
+  detail?: string;
+  /** Articles distincts mentionnant l'entite (alleles, serotypes). */
+  nArticles?: number;
+  /**
+   * Resultat « enfant » propose sous un resultat parent (alleles 4-digit d'un
+   * groupe, alleles d'un serotype) : rendu en retrait.
+   */
+  childOf?: string;
 }
 
 // --------------------------------------------------------------------------
@@ -151,6 +171,10 @@ export interface AssociationMatrixCell {
  */
 export interface AssociationMatrix {
   resolution: "2-digit" | "4-digit";
+  /** Locus affiche, ou null quand tous les loci sont presents. */
+  locus?: string | null;
+  /** Loci disponibles a cette resolution, avec leur effectif. */
+  loci?: { locus: string; n: number }[];
   /** Classe I puis II, loci dans l'ordre A, B, C, DRB1, DQB1, DPB1. */
   alleles: MatrixAllele[];
   /** Ordre des categories cliniques (`CATEGORIES`), puis libelle. */
@@ -162,4 +186,67 @@ export interface AssociationMatrix {
 export interface PublicationsPerYear {
   year: number;
   nArticles: number;
+}
+
+// --------------------------------------------------------------------------
+// Serotypes (referentiel de reference, cf. docs/SEROTYPES.md)
+// --------------------------------------------------------------------------
+
+export type SerotypeKind = "specific" | "broad" | "associated" | "cellular";
+
+export interface Serotype {
+  /** Cle de route : « DR15 », « Cw7 », « DPw4 ». */
+  serotypeId: string;
+  /** Locus serologique : A, B, C, DR, DQ, DP. */
+  locus: string;
+  label: string;
+  /** Famille large dont il est une subdivision (« DR2 » pour DR15). */
+  broadSerotype: string | null;
+  kind: SerotypeKind;
+  note: string | null;
+}
+
+/** Specificite et effectifs du corpus, pour l'index `/serotype`. */
+export interface SerotypeCatalogEntry extends Serotype {
+  /** Groupes 2-digit lies. */
+  nGroups: number;
+  /** Alleles 4-digit lies. */
+  nAlleles: number;
+  /** Articles distincts mentionnant au moins l'un de ses alleles. */
+  nArticles: number;
+}
+
+/** Allele membre d'un serotype. */
+export interface SerotypeMember {
+  hla: string;
+  resolution: string;
+  parentHla: string | null;
+  /** direct | group | narrow : cf. schema.sql. */
+  via: "direct" | "group" | "narrow";
+  nArticles: number;
+  nOutcomes: number;
+  /** Co-occurrences au-dessus du seuil (tout niveau sauf `weak`). */
+  nMarked: number;
+}
+
+/** Serotype porte par un allele, pour les badges de la fiche. */
+export interface AlleleSerotype {
+  serotypeId: string;
+  kind: SerotypeKind;
+  broadSerotype: string | null;
+  /** Vrai si seuls certains alleles du groupe portent ce serotype. */
+  partial: boolean;
+}
+
+/** Complication co-mentionnee avec au moins un allele d'un serotype. */
+export interface SerotypeOutcome {
+  outcome: string;
+  label: string;
+  category: string;
+  /** Articles distincts citant un allele du serotype ET la complication. */
+  nArticles: number;
+  /** Alleles du serotype co-mentionnes avec cette complication. */
+  nAlleles: number;
+  /** Niveau de signal le plus marque parmi ces alleles. */
+  topLevel: SignalLevel;
 }

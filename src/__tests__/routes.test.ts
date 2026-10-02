@@ -36,6 +36,7 @@ const APP_DIR = path.join(process.cwd(), "src", "app");
  */
 const EXPECTED_PREFIX: Record<EntityType, string> = {
   allele: "allele",
+  serotype: "serotype",
   outcome: "complication",
   article: "article",
   author: "auteur",

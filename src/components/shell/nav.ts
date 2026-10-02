@@ -25,6 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
     short: "Graphe",
     description: "Navigation de proche en proche entre allèles et complications",
   },
+  { href: "/serotype", label: "Sérotypes", description: "Spécificités sérologiques (DR15, B27…) et leurs allèles" },
   {
     href: "/matrice",
     label: "Matrice",

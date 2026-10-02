@@ -160,8 +160,8 @@ Ordre vertical, sur toutes les routes :
   « / » ou Ctrl/⌘-K, flèches + Entrée. **Un seul `SearchCommand` par page**
   (il écoute les raccourcis). La palette rappelle le cadrage en pied.
 - Mobile (< `lg`) : menu hamburger (`MobileNav`), recherche en bouton-icône.
-- `/matrice`, `/carte-v1`, `/methode` sont des **pages provisoires**
-  (`UnderConstruction`) à remplacer. `/methode` porte déjà l'`EpistemicNotice` :
+- `/methode` est une **page provisoire** ; `/matrice` et `/carte-v1` sont
+  livrées (voir [`VISUALISATIONS.md`](VISUALISATIONS.md)). `/methode` porte déjà l'`EpistemicNotice` :
   c'est la cible de tous les liens « Méthodologie » / « En savoir plus ».
 
 ---
@@ -260,6 +260,7 @@ stroke="rgb(var(--surface))" strokeWidth={3} paintOrder="stroke"`.
 
 - La carte d'entrée « Complication » de l'accueil pointe vers `/complication`,
   qui n'a pas de page d'index (404 préexistant).
-- Le graphe garde son rendu SVG en anneaux ; seuls ses couleurs, contrôles et
-  légende ont été alignés sur le système.
+- ~~Le graphe garde son rendu SVG en anneaux~~ : remplacé par un réseau
+  interactif (d3-force + d3-zoom) — voir [`VISUALISATIONS.md`](VISUALISATIONS.md)
+  et les composants de `src/components/charts/`.
 - Pas de bascule clair/sombre manuelle (préférence système uniquement).

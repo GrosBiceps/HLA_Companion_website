@@ -161,7 +161,7 @@ describe("navigation inverse par complication", () => {
 
   it("ne masque ni les negations ni le non significatif", () => {
     const all = getDb()
-      .prepare("SELECT DISTINCT outcome FROM associations")
+      .prepare("SELECT DISTINCT outcome FROM associations WHERE organ = 'all'")
       .all() as { outcome: string }[];
 
     let seenNonSignificant = 0;
@@ -169,7 +169,9 @@ describe("navigation inverse par complication", () => {
     for (const { outcome } of all) {
       const rows = getAssociationsForOutcome(outcome);
       const n = getDb()
-        .prepare("SELECT COUNT(*) AS n FROM associations WHERE outcome = ?")
+        .prepare(
+          "SELECT COUNT(*) AS n FROM associations WHERE organ = 'all' AND outcome = ?",
+        )
         .get(outcome) as { n: number };
       // Aucune ligne perdue : la requete ne filtre rien.
       expect(rows.length).toBe(n.n);

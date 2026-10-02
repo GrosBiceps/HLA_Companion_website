@@ -20,6 +20,7 @@ const base: AssociationRow = {
   orCiHigh: 17.2,
   fdr: 2.3e-7,
   fdrTwoSided: 4.6e-7,
+  nUniverse: 7000,
 };
 
 describe("AssociationCard", () => {

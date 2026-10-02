@@ -101,6 +101,29 @@ Ni bleu ni orange, pour ne pas concurrencer le signal (dans le graphe : nœuds
 | HLA classe I | — | `bg-hla-class-1` | `#3A439F` | `#8E99F0` |
 | HLA classe II | — | `bg-hla-class-2` | `#7C88DD` | `#C3CAF8` |
 
+Deux catégories s'y ajoutent pour les organes non rénaux : `cat-gvh`
+(`#6F9A1F` / `#A9D04A`) et `cat-survie` (`#5F7A8A` / `#9DB5C4`).
+
+### Organes (7 + « tous »)
+
+Jetons `--organ-*` et classes `organ-*`, **toujours doublés d'une forme**
+(`ORGAN_SHAPES`, composant `OrganMark`) : la couleur n'est jamais seule. Aucune
+teinte d'organe ne reprend une teinte de signal ou de catégorie (testé).
+
+| Organe | Clair | Sombre | Forme |
+|---|---|---|---|
+| Rein | `#B04A5E` | `#E58C9D` | cercle |
+| Foie | `#A8861C` | `#E3CE72` | carré |
+| Cœur | `#8A1F55` | `#D86AA6` | losange |
+| Poumon | `#3C8DBE` | `#8CCBF0` | triangle |
+| GCSH | `#8B3F94` | `#C98AD0` | hexagone |
+| Pancréas | `#7A7F1F` | `#BEC450` | pentagone |
+| Intestin | `#2A8C7C` | `#5CC5B3` | barre |
+| Tous | `#64697C` | `#8B91A3` | anneau |
+
+Composants : `OrganChip`, `OrganBreakdown`, `OrganScope`, `OrganSelector`
+(`src/components/organ/`). Voir [`ORGANES.md`](ORGANES.md).
+
 ⚠ Les clés de `CATEGORIES` sont sans accents (miroir du pipeline Python).
 Pour l'affichage, passer par `categoryDisplay(category)` (« Néoplasie »).
 

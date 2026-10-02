@@ -15,6 +15,7 @@ import {
   getSerotypesForAllele,
 } from "../lib/serotypes";
 import { getAlleleChildSummaries } from "../lib/allele-nav";
+import { ORGAN_KEYS } from "../lib/organ";
 
 /**
  * Budget de latence sur le corpus elargi (~900 alleles 4-digit, ~6 000
@@ -62,5 +63,23 @@ describe("latence des requetes sur le corpus elargi", () => {
     for (const q of ["DR15", "a02", "DQB1*02:01", "B27", "dq", "rejet", "kidney"]) {
       expect(best(() => searchEntities(q)), q).toBeLessThan(BUDGET_MS);
     }
+  });
+
+  /** Chaque strate d'organe garde le meme budget (jointure sur article_organs). */
+  describe.each(ORGAN_KEYS)("strate %s", (organ) => {
+    const perOrgan: [string, () => unknown][] = [
+      ["catalogue des alleles", () => getAlleleCatalog(organ)],
+      ["catalogue des serotypes", () => getSerotypeCatalog(organ)],
+      ["membres de DR5", () => getSerotypeMembers("DR5", organ)],
+      ["enfants de A*02", () => getAlleleChildSummaries("HLA-A*02", organ)],
+      ["matrice 4-digit complete", () => getAssociationMatrix("4-digit", undefined, organ)],
+      ["voisinage du graphe, profondeur 3", () => getNeighborhood("HLA-DQB1*02:01", 3, undefined, organ)],
+      ["stats du corpus", () => getCorpusStats(organ)],
+      ["signaux marquants", () => getSignalHighlights({ limit: 20, organ })],
+      ["recherche", () => searchEntities("DR15", 10, organ)],
+    ];
+    it.each(perOrgan)("%s < 100 ms", (_name, fn) => {
+      expect(best(fn)).toBeLessThan(BUDGET_MS);
+    });
   });
 });

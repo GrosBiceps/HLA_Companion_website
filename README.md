@@ -137,6 +137,9 @@ bibliothèque standard). `next.config.ts` force ensuite l'inclusion de
 
 - [Document de conception complet](docs/specs/2026-09-16-compagnon-hla-design.md)
   — modèle de données, prototypes UI, décisions et justifications.
+- [Organes et strates statistiques](docs/ORGANES.md)
+  — corpus multi-organe (sept organes), `?organe=` dans l'URL, statistiques
+  recalculées par strate, garde-fous.
 - [Bascule vers les données réelles](docs/BASCULE_DONNEES_REELLES.md)
   — repère de vérification, correspondance des CSV, retrait du bandeau
   synthétique, checklist de re-vérification.

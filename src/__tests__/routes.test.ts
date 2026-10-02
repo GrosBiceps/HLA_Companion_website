@@ -103,6 +103,38 @@ describe("routes de la recherche", () => {
   });
 });
 
+describe("report de l'organe sur les liens internes", () => {
+  /**
+   * Un lien ecrit en dur vers une page sensible a l'organe perd la strate au
+   * clic. Hors landing / presentation (hors perimetre) et hors pages de
+   * contenu, tout `href` vers ces routes doit passer par `withOrgan`,
+   * `entityHref` ou `graphHref` (qui le font).
+   */
+  const SENSITIVE = /href=\{?["'`]\/(allele|complication|serotype|article|auteur|matrice|graph)\b/;
+  const EXEMPT = [/app\/methode\//, /not-found\.tsx$/, /components\/guide\//, /UnderConstruction\.tsx$/, /components\/AlleleBreadcrumb\.tsx$/, /src\/app\/page\.tsx$/, /components\/landing\//, /app\/presentation\//, /__tests__\//];
+
+  it("aucun href en dur vers une route sensible a l'organe", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx$/.test(entry.name) && !EXEMPT.some((r) => r.test(full))) {
+          fs.readFileSync(full, "utf-8")
+            .split("\n")
+            .forEach((line, i) => {
+              if (SENSITIVE.test(line) && !/withOrgan|entityHref|graphHref|organ/.test(line)) {
+                offenders.push(`${path.relative(process.cwd(), full)}:${i + 1}: ${line.trim()}`);
+              }
+            });
+        }
+      }
+    };
+    walk(path.join(process.cwd(), "src"));
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("hygiene des sources", () => {
   /**
    * Un octet NUL rend un fichier binaire aux yeux de git : plus de diff, plus

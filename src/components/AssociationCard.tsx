@@ -1,8 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { ChevronRight, Quote } from "lucide-react";
 import { SentenceDrawer } from "@/components/SentenceDrawer";
 import { SignalIndicator } from "@/components/SignalIndicator";
+import { buttonClasses } from "@/components/ui/Button";
+import { cn } from "@/lib/cn";
+import { SIGNAL_CLASSES } from "@/lib/theme";
 import type { AssociationRow } from "@/lib/types";
 
 /**
@@ -32,6 +36,11 @@ import type { AssociationRow } from "@/lib/types";
  *
  * Aucun terme causal n'apparait dans le texte visible : la carte decrit des
  * CO-MENTIONS, pas une relation clinique.
+ *
+ * STYLE. Filet gauche a la couleur du signal (repere de balayage), barre de
+ * repartition affirmees/niees (deux effectifs verifiables, pas une metrique),
+ * bouton principal « Voir les N phrases » : le chemin de verification est
+ * l'action la plus visible de la carte.
  */
 
 /**
@@ -73,18 +82,35 @@ export function AssociationCard({
   } = association;
 
   const muted = !isSignificant;
+  const nAffirmed = Math.max(nCooccurrence - nNegated, 0);
 
   return (
     <article
-      className={`rounded-lg border bg-white p-4 ${
-        muted ? "border-slate-200 opacity-70" : "border-slate-300"
-      }`}
+      className={cn(
+        "relative overflow-hidden rounded-xl border border-line p-4 sm:p-5",
+        muted ? "bg-surface/60" : "bg-surface shadow-card",
+      )}
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+      {/*
+        Filet de signal a gauche : repere de balayage dans une longue liste.
+        Absent pour le non-significatif, qui reste lisible mais sans relief.
+      */}
+      {!muted ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute inset-y-0 left-0 w-1",
+            SIGNAL_CLASSES[signalLevel].bg,
+          )}
+        />
+      ) : null}
+
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <h3
-          className={`text-base font-semibold ${
-            muted ? "text-slate-500" : "text-slate-900"
-          }`}
+          className={cn(
+            "min-w-0 text-[0.975rem] font-semibold leading-snug",
+            muted ? "text-fg-muted" : "text-fg",
+          )}
         >
           {label}
         </h3>
@@ -93,18 +119,54 @@ export function AssociationCard({
 
       {/* Le compte d'articles : un seul noeud de texte, en clair. */}
       <p
-        className={`mt-2 text-sm ${muted ? "text-slate-500" : "text-slate-800"}`}
+        className={cn(
+          "mt-2 text-sm leading-relaxed",
+          muted ? "text-fg-subtle" : "text-fg-muted",
+        )}
       >
-        <strong className="font-semibold">{`${nCooccurrence} article${nCooccurrence > 1 ? "s" : ""}`}</strong>{" "}
+        <strong
+          className={cn(
+            "tabular font-semibold",
+            muted ? "text-fg-muted" : "text-fg",
+          )}
+        >{`${nCooccurrence} article${nCooccurrence > 1 ? "s" : ""}`}</strong>{" "}
         co-mentionnent cet allèle et cette complication
         {firstYear !== null ? ` (depuis ${firstYear})` : ""}.
       </p>
 
+      {/*
+        Repartition affirmees / niees : le meme effectif, decoupe. Purement
+        visuelle (aria-hidden) : le texte ci-dessous porte les chiffres.
+      */}
+      {nCooccurrence > 0 ? (
+        <div
+          aria-hidden="true"
+          className="mt-3 flex h-1.5 max-w-xs gap-px overflow-hidden rounded-full bg-fg/10"
+        >
+          <span
+            className={muted ? "bg-fg-faint" : "bg-fg-subtle"}
+            style={{ width: `${(nAffirmed / nCooccurrence) * 100}%` }}
+          />
+          {nNegated > 0 ? (
+            <span
+              className="bg-warn"
+              style={{ width: `${(nNegated / nCooccurrence) * 100}%` }}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Les mentions negatives ne sont jamais repliees ni omises. */}
       {nNegated > 0 ? (
-        <p className="mt-1 text-sm font-medium text-amber-900">
-          {`dont ${nNegated} au sens négatif`} — la phrase source y nie la
-          co-occurrence.
+        <p className="mt-2 flex items-start gap-2 text-sm text-warn-soft-fg">
+          <span
+            aria-hidden="true"
+            className="mt-[6px] h-2 w-2 shrink-0 rounded-sm bg-warn"
+          />
+          <span>
+            <strong className="font-semibold">{`dont ${nNegated} au sens négatif`}</strong>{" "}
+            — la phrase source y nie la co-occurrence.
+          </span>
         </p>
       ) : null}
 
@@ -115,7 +177,7 @@ export function AssociationCard({
         lecture d'ecran.
       */}
       {signalLevel === "inverse" ? (
-        <p className="mt-1 text-sm text-violet-800">
+        <p className="mt-3 rounded-lg bg-signal-inverse/10 px-3 py-2 text-sm text-fg">
           Co-mentions moins fréquentes qu&apos;attendu si les mentions étaient
           réparties au hasard dans le texte : piste de protection, à confirmer
           en lisant les sources.
@@ -123,13 +185,13 @@ export function AssociationCard({
       ) : null}
 
       {!isSignificant ? (
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-2 text-sm text-fg-subtle">
           Sous le seuil statistique du corpus : cette co-occurrence n&apos;est
           pas distinguable du hasard. Elle reste affichée, pas masquée.
         </p>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap items-center gap-4">
+      <div className="mt-4 flex flex-wrap items-start gap-x-3 gap-y-2 border-t border-line pt-3">
         {/*
           LE CHEMIN DE VERIFICATION. Ce bouton est ce qui fait du compte
           ci-dessus une quantite verifiable plutot qu'une affirmation : il
@@ -140,11 +202,47 @@ export function AssociationCard({
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
-          className="text-sm font-medium text-slate-900 underline
-                     underline-offset-2 hover:text-slate-600"
+          className={buttonClasses(muted ? "secondary" : "primary", "sm")}
         >
+          <Quote aria-hidden="true" className="h-3.5 w-3.5" />
           {`Voir le${nCooccurrence > 1 ? "s" : ""} ${nCooccurrence} phrase${nCooccurrence > 1 ? "s" : ""}`}
         </button>
+
+        {/*
+          Repli ferme par defaut : le lecteur rencontre d'abord un effectif
+          verifiable, et ne voit les metriques que s'il va les chercher.
+        */}
+        <details className="group/details min-w-0 flex-1 basis-60">
+          <summary className="inline-flex h-8 cursor-pointer select-none items-center gap-1 rounded-md px-1.5 text-xs font-medium text-fg-subtle hover:text-fg">
+            <ChevronRight
+              aria-hidden="true"
+              className="h-3.5 w-3.5 transition-transform group-open/details:rotate-90"
+            />
+            Détail statistique
+          </summary>
+          <div className="mt-2 space-y-2 rounded-lg bg-surface-muted p-3 text-xs text-fg-muted">
+            <p>
+              Ces valeurs quantifient une co-occurrence de termes dans des
+              résumés, pas une relation observée chez des patients.
+            </p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+              <dt className="text-fg-subtle">NPMI</dt>
+              <dd className="tabular font-mono text-fg">{num(npmi)}</dd>
+              <dt className="text-fg-subtle">Odds ratio</dt>
+              <dd className="tabular font-mono text-fg">{num(oddsRatio, 1)}</dd>
+              <dt className="text-fg-subtle">IC 95 %</dt>
+              <dd className="tabular font-mono text-fg">
+                {orCiLow === null || orCiHigh === null
+                  ? "—"
+                  : `${num(orCiLow, 1)} – ${num(orCiHigh, 1)}`}
+              </dd>
+              <dt className="text-fg-subtle">FDR (unilatéral)</dt>
+              <dd className="tabular font-mono text-fg">{sci(fdr)}</dd>
+              <dt className="text-fg-subtle">FDR (bilatéral)</dt>
+              <dd className="tabular font-mono text-fg">{sci(fdrTwoSided)}</dd>
+            </dl>
+          </div>
+        </details>
       </div>
 
       {drawerOpen ? (
@@ -155,39 +253,6 @@ export function AssociationCard({
           onClose={() => setDrawerOpen(false)}
         />
       ) : null}
-
-      {/*
-        Repli ferme par defaut : le lecteur rencontre d'abord un effectif
-        verifiable, et ne voit les metriques que s'il va les chercher.
-      */}
-      <details className="mt-3 border-t border-slate-200 pt-2">
-        <summary className="cursor-pointer text-xs font-semibold uppercase
-                            tracking-wide text-slate-600">
-          Détail statistique
-        </summary>
-        <div className="mt-2 space-y-1 text-xs text-slate-700">
-          <p>
-            Ces valeurs quantifient une co-occurrence de termes dans des
-            résumés, pas une relation observée chez des patients.
-          </p>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-            <dt className="text-slate-600">NPMI</dt>
-            <dd className="font-mono">{num(npmi)}</dd>
-            <dt className="text-slate-600">Odds ratio</dt>
-            <dd className="font-mono">{num(oddsRatio, 1)}</dd>
-            <dt className="text-slate-600">IC 95 %</dt>
-            <dd className="font-mono">
-              {orCiLow === null || orCiHigh === null
-                ? "—"
-                : `${num(orCiLow, 1)} – ${num(orCiHigh, 1)}`}
-            </dd>
-            <dt className="text-slate-600">FDR (unilatéral)</dt>
-            <dd className="font-mono">{sci(fdr)}</dd>
-            <dt className="text-slate-600">FDR (bilatéral)</dt>
-            <dd className="font-mono">{sci(fdrTwoSided)}</dd>
-          </dl>
-        </div>
-      </details>
     </article>
   );
 }

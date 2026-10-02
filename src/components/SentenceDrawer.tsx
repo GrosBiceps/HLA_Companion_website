@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { ExternalLink, X } from "lucide-react";
 import { HighlightedSentence } from "@/components/HighlightedSentence";
+import { SegmentedControl, type SegmentOption } from "@/components/ui/SegmentedControl";
+import { Skeleton, SkeletonText } from "@/components/ui/Feedback";
+import { cn } from "@/lib/cn";
 import type { PairMention } from "@/lib/types";
 
 /**
@@ -57,12 +61,12 @@ function PolarityBadge({ polarity }: { polarity: PairMention["polarity"] }) {
   const negated = polarity === "negated";
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs
-                  font-semibold uppercase tracking-wide ${
-                    negated
-                      ? "bg-amber-100 text-amber-900 ring-1 ring-amber-300"
-                      : "bg-emerald-100 text-emerald-900 ring-1 ring-emerald-300"
-                  }`}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-bold tracking-wider ring-1 ring-inset",
+        negated
+          ? "bg-warn-soft text-warn-soft-fg ring-warn-line"
+          : "bg-success-soft text-success-soft-fg ring-success-line",
+      )}
     >
       {negated ? "⚠ NÉGATIVE" : "✓ POSITIVE"}
     </span>
@@ -70,17 +74,22 @@ function PolarityBadge({ polarity }: { polarity: PairMention["polarity"] }) {
 }
 
 function MentionCard({ mention }: { mention: PairMention }) {
+  const negated = mention.polarity === "negated";
   return (
-    <li className="rounded-lg border border-slate-300 bg-white p-4">
+    <li
+      className={cn(
+        "rounded-xl border bg-surface p-4 shadow-xs",
+        negated ? "border-warn-line" : "border-line",
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <PolarityBadge polarity={mention.polarity} />
-        <span className="text-sm font-medium text-slate-600">
+        <span className="tabular text-xs font-medium text-fg-subtle">
           {mention.year}
         </span>
       </div>
 
-      <blockquote className="mt-3 border-l-2 border-slate-300 pl-3 text-sm
-                             text-slate-900">
+      <blockquote className="mt-3 border-l-2 border-line-strong pl-3 font-serif text-[0.95rem] leading-relaxed text-fg">
         «{" "}
         <HighlightedSentence
           sentence={mention.sentence}
@@ -90,9 +99,8 @@ function MentionCard({ mention }: { mention: PairMention }) {
         »
       </blockquote>
 
-      {mention.polarity === "negated" ? (
-        <div className="mt-3 rounded border border-amber-300 bg-amber-50 px-3
-                        py-2 text-xs text-amber-900">
+      {negated ? (
+        <div className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn-soft-fg">
           {mention.negationTrigger ? (
             <p>
               ⓘ Négation détectée : «&nbsp;{mention.negationTrigger}&nbsp;»
@@ -100,43 +108,42 @@ function MentionCard({ mention }: { mention: PairMention }) {
           ) : (
             <p>ⓘ Négation détectée par le pipeline.</p>
           )}
-          <p className="mt-0.5">{POLARITY_CAVEAT}</p>
+          <p className="mt-0.5 opacity-90">{POLARITY_CAVEAT}</p>
         </div>
       ) : null}
 
       {/* Reference bibliographique : ce que le type PairMention porte
           reellement (titre, revue, annee, citations) — pas d'auteurs dans le
           schema, le titre tient donc lieu d'identification de l'article. */}
-      <div className="mt-3 border-t border-slate-200 pt-2 text-xs
-                      text-slate-700">
-        <p className="font-medium text-slate-900">{mention.title}</p>
-        <p className="mt-0.5">
+      <div className="mt-3 border-t border-line pt-3 text-xs text-fg-muted">
+        <p className="text-[0.8125rem] font-medium leading-snug text-fg">
+          {mention.title}
+        </p>
+        <p className="mt-0.5 italic">
           {mention.journal ? `${mention.journal}, ` : ""}
           {mention.year}
         </p>
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="font-mono">PMID {mention.pmid}</span>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="rounded bg-surface-muted px-1.5 py-0.5 font-mono text-2xs text-fg-subtle ring-1 ring-inset ring-line">
+            PMID {mention.pmid}
+          </span>
           {mention.citedBy !== null ? (
-            <span>
-              cité {mention.citedBy} fois
-            </span>
+            <span className="text-fg-subtle">cité {mention.citedBy} fois</span>
           ) : null}
-          <a
-            href={pubmedHref(mention.pmid)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium underline underline-offset-2
-                       hover:text-slate-900"
-          >
-            PubMed ↗
-          </a>
-          <Link
-            href={articleHref(mention.pmid)}
-            className="font-medium underline underline-offset-2
-                       hover:text-slate-900"
-          >
-            Fiche article
-          </Link>
+          <span className="ml-auto flex items-center gap-3">
+            <a
+              href={pubmedHref(mention.pmid)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="link inline-flex items-center gap-0.5"
+            >
+              PubMed
+              <ExternalLink aria-hidden="true" className="h-3 w-3" />
+            </a>
+            <Link href={articleHref(mention.pmid)} className="link">
+              Fiche article
+            </Link>
+          </span>
         </div>
       </div>
     </li>
@@ -195,7 +202,12 @@ export function SentenceDrawer({
     }
     document.addEventListener("keydown", onKey);
     closeRef.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
   }, [onClose]);
 
   const all = mentions ?? [];
@@ -215,15 +227,15 @@ export function SentenceDrawer({
         ? sorted.filter((m) => m.polarity === "negated")
         : sorted;
 
-  const tabs: { key: Tab; text: string }[] = [
-    { key: "toutes", text: `Toutes ${sorted.length}` },
-    { key: "positives", text: `Positives ${nPositive}` },
-    { key: "negatives", text: `Négatives ${nNegated}` },
+  const tabs: SegmentOption<Tab>[] = [
+    { value: "toutes", label: "Toutes", count: sorted.length },
+    { value: "positives", label: "Positives", count: nPositive },
+    { value: "negatives", label: "Négatives", count: nNegated },
   ];
 
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-slate-900/40"
+      className="fixed inset-0 z-[60] flex animate-fade-in justify-end bg-fg/30 backdrop-blur-[2px]"
       onClick={onClose}
     >
       <section
@@ -231,29 +243,31 @@ export function SentenceDrawer({
         aria-modal="true"
         aria-label={`Phrases sources : ${hla} × ${label}`}
         onClick={(event) => event.stopPropagation()}
-        className="flex h-full w-full max-w-2xl flex-col overflow-y-auto
-                   bg-slate-50 shadow-xl"
+        className="flex h-full w-full max-w-2xl animate-slide-in-right flex-col overflow-y-auto border-l border-line bg-canvas shadow-overlay"
       >
-        <header className="sticky top-0 z-10 border-b border-slate-300
-                           bg-white px-4 py-3">
+        <header className="sticky top-0 z-10 border-b border-line bg-surface/95 px-4 py-4 backdrop-blur sm:px-6">
           <div className="flex items-start justify-between gap-3">
-            {/* Libelle clinique recu en prop — la cle technique n'apparait pas. */}
-            <h2 className="text-base font-semibold text-slate-900">
-              {hla} × {label}
-            </h2>
+            <div className="min-w-0 space-y-1">
+              <p className="eyebrow">Phrases sources</p>
+              {/* Libelle clinique recu en prop — la cle technique n'apparait pas. */}
+              <h2 className="text-lg font-semibold leading-snug text-fg">
+                <span className="allele">{hla}</span>
+                <span className="mx-1.5 font-normal text-fg-faint">×</span>
+                {label}
+              </h2>
+            </div>
             <button
               ref={closeRef}
               type="button"
               onClick={onClose}
               aria-label="Fermer le tiroir"
-              className="rounded border border-slate-300 px-2 py-0.5 text-sm
-                         text-slate-700 hover:bg-slate-100"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-muted ring-1 ring-inset ring-line hover:bg-surface-muted hover:text-fg"
             >
-              ✕
+              <X aria-hidden="true" className="h-4 w-4" />
             </button>
           </div>
 
-          <p className="mt-1 text-sm text-slate-700">
+          <p className="mt-2 text-sm text-fg-muted">
             {mentions === null
               ? failed
                 ? "Chargement impossible."
@@ -263,46 +277,49 @@ export function SentenceDrawer({
                 `${nNegated} négative${nNegated > 1 ? "s" : ""}`}
           </p>
 
-          <div className="mt-2 flex flex-wrap items-center justify-between
-                          gap-2">
-            <div className="flex flex-wrap gap-1" role="group"
-                 aria-label="Filtrer par polarité">
-              {tabs.map(({ key, text }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setTab(key)}
-                  aria-pressed={tab === key}
-                  className={`rounded px-2 py-1 text-xs font-medium ${
-                    tab === key
-                      ? "bg-slate-900 text-white"
-                      : "border border-slate-300 bg-white text-slate-700 " +
-                        "hover:bg-slate-100"
-                  }`}
-                >
-                  {text}
-                </button>
-              ))}
-            </div>
-            <span className="text-xs text-slate-600">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <SegmentedControl
+              ariaLabel="Filtrer par polarité"
+              options={tabs}
+              value={tab}
+              onChange={setTab}
+            />
+            <span className="text-xs text-fg-subtle">
               Tri : année décroissante
+            </span>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-fg-subtle">
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-mark-hla ring-1 ring-inset ring-mark-hla-fg/30" />
+              Segment repéré comme allèle
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-mark-outcome ring-1 ring-inset ring-mark-outcome-fg/30" />
+              Segment repéré comme complication
             </span>
           </div>
         </header>
 
-        <div className="flex-1 px-4 py-3">
+        <div className="flex-1 px-4 py-4 sm:px-6">
           {failed ? (
-            <p className="rounded-md border border-red-300 bg-red-50 px-4 py-3
-                          text-sm text-red-900">
+            <p className="rounded-lg border border-danger-line bg-danger-soft px-4 py-3 text-sm text-danger-soft-fg">
               Les phrases sources n&apos;ont pas pu être chargées. Ce
               n&apos;est pas un résultat sur le corpus : c&apos;est une panne
               d&apos;accès. Réessayez.
             </p>
           ) : mentions === null ? (
-            <p className="text-sm text-slate-600">Chargement des phrases…</p>
+            <div aria-hidden="true" className="space-y-3">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="space-y-3 rounded-xl border border-line bg-surface p-4">
+                  <Skeleton className="h-4 w-20 rounded-full" />
+                  <SkeletonText lines={3} />
+                </div>
+              ))}
+              <p className="sr-only">Chargement des phrases…</p>
+            </div>
           ) : visible.length === 0 ? (
-            <p className="rounded-md border border-slate-300 bg-white px-4 py-3
-                          text-sm text-slate-700">
+            <p className="rounded-lg border border-dashed border-line-strong bg-surface px-4 py-6 text-center text-sm text-fg-muted">
               Aucune phrase dans cette sélection.
             </p>
           ) : (
@@ -314,8 +331,7 @@ export function SentenceDrawer({
           )}
         </div>
 
-        <footer className="sticky bottom-0 border-t border-slate-300 bg-white
-                           px-4 py-3 text-center">
+        <footer className="sticky bottom-0 border-t border-line bg-surface/95 px-4 py-3 text-center backdrop-blur sm:px-6">
           {/*
             Signalement : en prototype local, la spec prevoit une ecriture dans
             un fichier JSON. Aucun point d'ecriture n'existe encore (la base est
@@ -329,8 +345,7 @@ export function SentenceDrawer({
             disabled
             title="Le signalement d'erreur n'est pas encore relié : prévu pour
                    une prochaine version"
-            className="text-xs font-medium text-slate-500
-                       cursor-not-allowed"
+            className="cursor-not-allowed text-xs font-medium text-fg-subtle"
           >
             ⚠ Extraction automatique — signaler une erreur
           </button>

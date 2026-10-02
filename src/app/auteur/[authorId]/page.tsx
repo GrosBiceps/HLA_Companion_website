@@ -87,7 +87,7 @@ export default async function AuthorPage({ params }: Params) {
   return (
     <div className="space-y-6">
       <header className="space-y-2">
-        <h1 className="text-2xl font-bold text-slate-900">
+        <h1 className="font-serif text-3xl font-semibold tracking-tight sm:text-4xl text-fg">
           {author.displayName}
         </h1>
 
@@ -97,15 +97,15 @@ export default async function AuthorPage({ params }: Params) {
         */}
         <p
           role="note"
-          className="flex items-start gap-2 rounded-md border-l-4
-                     border-amber-600 bg-amber-50 px-3 py-2 text-sm
-                     text-amber-950"
+          className="flex items-start gap-2 rounded-lg border-l-4
+                     border-warn bg-warn-soft px-3 py-2 text-sm
+                     text-warn-soft-fg"
         >
           <span aria-hidden="true">ⓘ</span>
           <span>{HOMONYM_RESERVATION}</span>
         </p>
 
-        <p className="text-sm text-slate-700">
+        <p className="text-sm text-fg-muted">
           {publications.length} publication
           {publications.length > 1 ? "s" : ""} dans le corpus
           {yearMin !== null && yearMax !== null
@@ -119,8 +119,7 @@ export default async function AuthorPage({ params }: Params) {
 
       <section
         aria-label="Comment lire cette fiche"
-        className="rounded-md border-l-4 border-slate-900 bg-slate-100 px-4 py-3
-                   text-sm text-slate-900"
+        className="rounded-lg border-l-[3px] border-primary/60 bg-primary-soft/60 px-4 py-3 text-sm leading-relaxed text-fg"
       >
         <p>
           Cette fiche décrit ce que <strong>le corpus indexé attribue</strong> à
@@ -131,14 +130,13 @@ export default async function AuthorPage({ params }: Params) {
       </section>
 
       <section aria-label="Centres d'intérêt" className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
+        <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
           Centres d&apos;intérêt
         </h2>
 
         {topHla.length === 0 && topOutcomes.length === 0 ? (
-          <p className="rounded-md border border-slate-300 bg-white px-4 py-3
-                        text-sm text-slate-700">
+          <p className="rounded-lg border border-line bg-surface px-4 py-3
+                        text-sm text-fg-muted">
             Aucune entité HLA ni complication n&apos;a été extraite des articles
             rattachés à ce nom.
           </p>
@@ -146,7 +144,7 @@ export default async function AuthorPage({ params }: Params) {
           <div className="grid gap-4 sm:grid-cols-2">
             {topHla.length > 0 ? (
               <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-fg">
                   Allèles récurrents
                 </h3>
                 <ul className="space-y-1">
@@ -154,12 +152,12 @@ export default async function AuthorPage({ params }: Params) {
                     <li key={entity.hla} className="text-sm">
                       <Link
                         href={`/allele/${encodeURIComponent(entity.hla)}`}
-                        className="text-slate-900 underline underline-offset-2
-                                   hover:text-slate-600"
+                        className="text-fg underline decoration-primary/30 underline-offset-[3px]
+                                   hover:text-primary"
                       >
                         {entity.hla}
                       </Link>{" "}
-                      <span className="text-slate-500">
+                      <span className="text-fg-subtle">
                         ({nArticles} article{nArticles > 1 ? "s" : ""})
                       </span>
                     </li>
@@ -170,7 +168,7 @@ export default async function AuthorPage({ params }: Params) {
 
             {topOutcomes.length > 0 ? (
               <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-900">
+                <h3 className="text-sm font-semibold text-fg">
                   Complications récurrentes
                 </h3>
                 {/* Libelle clinique de la base, jamais la cle technique. */}
@@ -179,12 +177,12 @@ export default async function AuthorPage({ params }: Params) {
                     <li key={entity.outcome} className="text-sm">
                       <Link
                         href={`/complication/${encodeURIComponent(entity.outcome)}`}
-                        className="text-slate-900 underline underline-offset-2
-                                   hover:text-slate-600"
+                        className="text-fg underline decoration-primary/30 underline-offset-[3px]
+                                   hover:text-primary"
                       >
                         {entity.label}
                       </Link>{" "}
-                      <span className="text-slate-500">
+                      <span className="text-fg-subtle">
                         ({nArticles} article{nArticles > 1 ? "s" : ""})
                       </span>
                     </li>
@@ -197,24 +195,23 @@ export default async function AuthorPage({ params }: Params) {
       </section>
 
       <section aria-label="Publications" className="space-y-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
+        <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
           Publications ({publications.length})
         </h2>
         <ul className="space-y-2">
           {publications.map((article) => (
             <li
               key={article.pmid}
-              className="rounded-md border border-slate-200 bg-white px-4 py-3"
+              className="rounded-lg border border-line bg-surface px-4 py-3"
             >
               <Link
                 href={`/article/${encodeURIComponent(article.pmid)}`}
-                className="text-sm font-medium text-slate-900 underline
-                           underline-offset-2 hover:text-slate-600"
+                className="text-sm font-medium text-fg underline
+                           underline-offset-2 hover:text-primary"
               >
                 {article.title}
               </Link>
-              <p className="mt-1 text-xs text-slate-600">
+              <p className="mt-1 text-xs text-fg-muted">
                 {article.journal ?? article.journalAbbrev ?? "Revue non renseignée"}{" "}
                 · {article.year}
               </p>
@@ -225,11 +222,10 @@ export default async function AuthorPage({ params }: Params) {
 
       {coAuthors.length > 0 ? (
         <section aria-label="Co-auteurs" className="space-y-2">
-          <h2 className="text-sm font-semibold uppercase tracking-wide
-                         text-slate-700">
+          <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
             Co-auteurs ({coAuthors.length})
           </h2>
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-fg-muted">
             Noms apparaissant sur les mêmes articles. La même réserve
             d&apos;homonymie s&apos;applique à chacun d&apos;eux.
           </p>
@@ -238,12 +234,12 @@ export default async function AuthorPage({ params }: Params) {
               <li key={co.authorId}>
                 <Link
                   href={`/auteur/${encodeURIComponent(co.authorId)}`}
-                  className="inline-block rounded border border-slate-300
-                             bg-white px-3 py-1 text-sm text-slate-900
-                             hover:border-slate-800 hover:bg-slate-50"
+                  className="inline-block rounded-lg border border-line
+                             bg-surface px-3 py-1 text-sm text-fg
+                             hover:border-primary/50 hover:bg-surface-muted"
                 >
                   {co.displayName}{" "}
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-fg-subtle">
                     ({co.nSharedArticles})
                   </span>
                 </Link>

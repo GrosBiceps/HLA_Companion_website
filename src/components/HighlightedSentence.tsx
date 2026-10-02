@@ -78,8 +78,12 @@ const MARK_CLASS: Record<"hla" | "outcome", string> = {
   // Deux teintes franchement distinctes, chacune avec un contraste suffisant
   // sur son fond : le lecteur doit pouvoir dire d'un coup d'oeil lequel des
   // deux surlignages porte sur l'allele.
-  hla: "rounded bg-sky-200 px-0.5 font-medium text-sky-950",
-  outcome: "rounded bg-amber-200 px-0.5 font-medium text-amber-950",
+  // Jetons `mark-*` de globals.css : bleu pour l'allele, ambre pour la
+  // complication, declines en mode sombre. Souligne en plus de la teinte,
+  // pour rester distinguable sans perception des couleurs.
+  hla: "rounded-[3px] bg-mark-hla px-0.5 font-medium text-mark-hla-fg box-decoration-clone underline decoration-mark-hla-fg/40 decoration-2 underline-offset-2",
+  outcome:
+    "rounded-[3px] bg-mark-outcome px-0.5 font-medium text-mark-outcome-fg box-decoration-clone underline decoration-dotted decoration-mark-outcome-fg/50 decoration-2 underline-offset-2",
 };
 
 const MARK_TITLE: Record<"hla" | "outcome", string> = {

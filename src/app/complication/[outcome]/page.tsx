@@ -93,8 +93,8 @@ export default async function OutcomePage({ params }: Params) {
     <div className="space-y-6">
       <header className="space-y-2">
         {/* Le libelle clinique, jamais `outcome.outcome`. */}
-        <h1 className="text-2xl font-bold text-slate-900">{outcome.label}</h1>
-        <p className="text-sm text-slate-700">
+        <h1 className="font-serif text-3xl font-semibold tracking-tight sm:text-4xl text-fg">{outcome.label}</h1>
+        <p className="text-sm text-fg-muted">
           Catégorie {outcome.category} — mentionnée dans {outcome.nMentions}{" "}
           article{outcome.nMentions > 1 ? "s" : ""} du corpus.
         </p>
@@ -102,8 +102,7 @@ export default async function OutcomePage({ params }: Params) {
 
       <section
         aria-label="Comment lire cette fiche"
-        className="rounded-md border-l-4 border-slate-900 bg-slate-100 px-4 py-3
-                   text-sm text-slate-900"
+        className="rounded-lg border-l-[3px] border-primary/60 bg-primary-soft/60 px-4 py-3 text-sm leading-relaxed text-fg"
       >
         <p>
           Cette page part de la complication et remonte vers les{" "}
@@ -115,9 +114,9 @@ export default async function OutcomePage({ params }: Params) {
         <p className="mt-1">
           Toute lecture clinique exige de relire les phrases sources.{" "}
           <Link
-            href="/methodologie"
-            className="font-medium underline underline-offset-2
-                       hover:text-slate-600"
+            href="/methode"
+            className="font-medium underline decoration-primary/30 underline-offset-[3px]
+                       hover:text-primary"
           >
             Méthodologie
           </Link>
@@ -125,14 +124,13 @@ export default async function OutcomePage({ params }: Params) {
       </section>
 
       <section aria-label="Allèles co-mentionnés" className="space-y-6">
-        <h2 className="text-sm font-semibold uppercase tracking-wide
-                       text-slate-700">
+        <h2 className="font-serif text-xl font-semibold tracking-tight text-fg">
           Allèles co-mentionnés ({associations.length})
         </h2>
 
         {associations.length === 0 ? (
-          <p className="rounded-md border border-slate-300 bg-white px-4 py-3
-                        text-sm text-slate-700">
+          <p className="rounded-lg border border-line bg-surface px-4 py-3
+                        text-sm text-fg-muted">
             Aucun allèle n&apos;est co-mentionné avec cette complication dans ce
             corpus. Ce n&apos;est pas un résultat sur la clinique : c&apos;est
             l&apos;état de la littérature indexée telle qu&apos;elle a été
@@ -140,7 +138,7 @@ export default async function OutcomePage({ params }: Params) {
           </p>
         ) : (
           <>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-fg-muted">
               {nSignificant} ligne{nSignificant > 1 ? "s" : ""} au-dessus du
               seuil statistique du corpus, {associations.length - nSignificant}{" "}
               en dessous. Les secondes restent affichées, grisées : une absence
@@ -149,10 +147,10 @@ export default async function OutcomePage({ params }: Params) {
 
             {groups.map(({ level, rows }) => (
               <div key={level} className="space-y-3">
-                <h3 className="border-b border-slate-200 pb-1 text-sm
-                               font-semibold text-slate-900">
+                <h3 className="border-b border-line pb-1 text-sm
+                               font-semibold text-fg">
                   {SIGNAL_LABELS[level].label}{" "}
-                  <span className="font-normal text-slate-500">
+                  <span className="font-normal text-fg-subtle">
                     ({rows.length})
                   </span>
                 </h3>
@@ -166,8 +164,8 @@ export default async function OutcomePage({ params }: Params) {
                       <p className="text-sm">
                         <Link
                           href={`/allele/${encodeURIComponent(row.hla)}`}
-                          className="font-semibold text-slate-900 underline
-                                     underline-offset-2 hover:text-slate-600"
+                          className="font-semibold text-fg underline
+                                     underline-offset-2 hover:text-primary"
                         >
                           {row.hla}
                         </Link>

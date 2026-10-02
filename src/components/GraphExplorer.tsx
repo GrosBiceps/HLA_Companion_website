@@ -4,6 +4,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SIGNAL_DISPLAY } from "@/lib/signal";
 import { SIGNAL_LABELS, SIGNAL_LEVELS } from "@/lib/labels";
+import {
+  SIGNAL_COLORS,
+  CATEGORIES,
+  categoryClasses,
+  categoryColor,
+  categoryDisplay,
+  hlaClassColor,
+  hlaClassFromKey,
+} from "@/lib/theme";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { Callout } from "@/components/ui/Feedback";
+import { SignalGlyph } from "@/components/SignalIndicator";
+import { cn } from "@/lib/cn";
 import type { SignalLevel } from "@/lib/types";
 import type { GraphEdge, GraphNode, Neighborhood } from "@/lib/queries";
 
@@ -59,18 +72,12 @@ const CENTER = SIZE / 2;
 const RING_1 = 150;
 const RING_2 = 268;
 
-/** Teintes par categorie clinique — memes familles que les fiches. */
-const CATEGORY_FILL: Record<string, string> = {
-  Rejet: "#dc2626",
-  Immunisation: "#ea580c",
-  "Fonction du greffon": "#0891b2",
-  Infection: "#16a34a",
-  Neoplasie: "#9333ea",
-  Metabolique: "#ca8a04",
-  Recidive: "#db2777",
-};
-const CATEGORY_FALLBACK = "#64748b";
-
+/**
+ * Teintes : echelle categorielle (noeuds complication), famille indigo par
+ * classe (noeuds HLA), echelle ordinale du signal (liens) — toutes issues de
+ * `src/lib/theme.ts`, sous forme `rgb(var(--token))` : elles suivent donc le
+ * mode sombre sans JS.
+ */
 /** Epaisseur de trait par force de signal. Qualitatif, pas metrique. */
 const EDGE_WIDTH: Record<SignalLevel, number> = {
   inverse: 3,
@@ -81,11 +88,11 @@ const EDGE_WIDTH: Record<SignalLevel, number> = {
 };
 
 const EDGE_STROKE: Record<SignalLevel, string> = {
-  inverse: "#7c3aed",
-  strong: "#075985",
-  clear: "#0369a1",
-  moderate: "#475569",
-  weak: "#cbd5e1",
+  inverse: SIGNAL_COLORS.inverse.css,
+  strong: SIGNAL_COLORS.strong.css,
+  clear: SIGNAL_COLORS.clear.css,
+  moderate: SIGNAL_COLORS.moderate.css,
+  weak: SIGNAL_COLORS.weak.css,
 };
 
 interface Positioned extends GraphNode {
@@ -219,33 +226,23 @@ export default function GraphExplorer({
   return (
     <div className="space-y-4">
       {/* -------- Controles -------- */}
-      <div className="flex flex-wrap items-center gap-4 rounded border border-slate-200 bg-slate-50 p-3 text-sm">
-        <fieldset className="flex items-center gap-2">
-          <legend className="sr-only">Profondeur d&apos;exploration</legend>
-          <span className="font-medium text-slate-700">Profondeur</span>
-          {[1, 2, 3].map((d) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={d === depth}
-              onClick={() => navigate({ depth: d })}
-              className={`rounded border px-2.5 py-1 ${
-                d === depth
-                  ? "border-sky-700 bg-sky-700 text-white"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              {d}
-            </button>
-          ))}
-        </fieldset>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-line bg-surface px-4 py-3 text-sm shadow-xs">
+        <div className="flex items-center gap-2.5">
+          <span className="eyebrow">Profondeur</span>
+          <SegmentedControl
+            ariaLabel="Profondeur d'exploration"
+            options={[1, 2, 3].map((d) => ({ value: d, label: String(d) }))}
+            value={depth}
+            onChange={(d) => navigate({ depth: d })}
+          />
+        </div>
 
-        <label className="flex items-center gap-2">
-          <span className="font-medium text-slate-700">Signal minimal</span>
+        <label className="flex items-center gap-2.5">
+          <span className="eyebrow">Signal minimal</span>
           <select
             value={minSignal ?? ""}
             onChange={(e) => navigate({ minSignal: e.target.value })}
-            className="rounded border border-slate-300 bg-white px-2 py-1"
+            className="h-8 rounded-lg border border-line-strong bg-surface px-2 text-sm text-fg shadow-xs focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15"
           >
             <option value="">Tout afficher (par défaut)</option>
             {SIGNAL_LEVELS.map((level) => (
@@ -257,7 +254,7 @@ export default function GraphExplorer({
         </label>
 
         {graph && (
-          <p className="text-slate-600">
+          <p className="tabular ml-auto text-xs text-fg-subtle">
             {graph.nodes.length} nœuds · {drawableEdges.length} liens
           </p>
         )}
@@ -268,31 +265,31 @@ export default function GraphExplorer({
         allege pourrait autrement se lire comme un corpus pauvre.
       */}
       {minSignal && (
-        <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
+        <Callout tone="warn">
           Filtre actif : les co-occurrences plus faibles que «{" "}
           {SIGNAL_LABELS[minSignal].label} » sont retirées de cette vue. Elles
           restent présentes dans le corpus.
-        </p>
+        </Callout>
       )}
 
       {graph?.truncated && (
-        <p className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
+        <Callout tone="warn">
           Voisinage tronqué à 150 nœuds pour rester lisible : les
           co-occurrences au signal le plus marqué ont été conservées. Réduisez
           la profondeur pour une vue complète.
-        </p>
+        </Callout>
       )}
 
       {/* -------- Graphe -------- */}
-      <div className="relative rounded border border-slate-200 bg-white">
+      <div className="relative overflow-hidden rounded-xl border border-line bg-surface shadow-card [background-image:radial-gradient(rgb(var(--fg)/0.07)_1px,transparent_1px)] [background-size:18px_18px]">
         {pending && (
-          <p className="p-8 text-center text-slate-500">
+          <p className="p-10 text-center text-sm text-fg-subtle">
             Lecture du voisinage…
           </p>
         )}
 
         {failed && (
-          <p className="p-8 text-center text-red-700">
+          <p role="alert" className="m-4 rounded-lg bg-danger-soft p-6 text-center text-sm text-danger-soft-fg">
             Le corpus n&apos;a pas pu être consulté. Ce n&apos;est pas un
             résultat : réessayez.
           </p>
@@ -301,7 +298,7 @@ export default function GraphExplorer({
         {!pending && !failed && graph && (
           <svg
             viewBox={`0 0 ${SIZE} ${SIZE}`}
-            className="h-auto w-full"
+            className="mx-auto h-auto max-h-[75vh] w-full"
             role="img"
             aria-label={`Voisinage de ${graph.center?.label ?? center} à la profondeur ${depth}`}
           >
@@ -330,8 +327,8 @@ export default function GraphExplorer({
               const isCenter = node.distance === 0;
               const fill =
                 node.type === "outcome"
-                  ? (CATEGORY_FILL[node.category ?? ""] ?? CATEGORY_FALLBACK)
-                  : "#334155";
+                  ? categoryColor(node.category).css
+                  : hlaClassColor(hlaClassFromKey(node.id)).css;
               return (
                 <g
                   key={`${node.type}:${node.id}`}
@@ -357,8 +354,8 @@ export default function GraphExplorer({
                       cy={node.y}
                       r={r}
                       fill={fill}
-                      stroke={isCenter ? "#0c4a6e" : "#ffffff"}
-                      strokeWidth={isCenter ? 4 : 1.5}
+                      stroke={isCenter ? "rgb(var(--fg))" : "rgb(var(--surface))"}
+                      strokeWidth={isCenter ? 3.5 : 1.75}
                       opacity={node.distance >= 2 ? 0.7 : 1}
                     />
                   ) : (
@@ -369,8 +366,8 @@ export default function GraphExplorer({
                       height={r * 2}
                       rx={3}
                       fill={fill}
-                      stroke={isCenter ? "#0c4a6e" : "#ffffff"}
-                      strokeWidth={isCenter ? 4 : 1.5}
+                      stroke={isCenter ? "rgb(var(--fg))" : "rgb(var(--surface))"}
+                      strokeWidth={isCenter ? 3.5 : 1.75}
                       opacity={node.distance >= 2 ? 0.7 : 1}
                     />
                   )}
@@ -381,7 +378,11 @@ export default function GraphExplorer({
                     textAnchor="middle"
                     fontSize={isCenter ? 13 : 10}
                     fontWeight={isCenter ? 700 : 400}
-                    fill="#1e293b"
+                    fill="rgb(var(--fg))"
+                    stroke="rgb(var(--surface))"
+                    strokeWidth={3}
+                    paintOrder="stroke"
+                    fontFamily={node.type === "hla" ? "var(--font-mono)" : undefined}
                     className="pointer-events-none select-none"
                   >
                     {node.label.length > 26
@@ -396,14 +397,14 @@ export default function GraphExplorer({
 
         {/* Infobulle : vocabulaire de signal, aucune metrique. */}
         {hoveredNode && graph && (
-          <div className="pointer-events-none absolute left-3 top-3 max-w-xs rounded border border-slate-300 bg-white/95 p-2 text-xs shadow">
-            <p className="font-semibold text-slate-800">{hoveredNode.label}</p>
-            <p className="text-slate-600">
+          <div className="pointer-events-none absolute left-3 top-3 max-w-xs rounded-lg border border-line bg-surface/95 p-3 text-xs shadow-raised backdrop-blur">
+            <p className={cn("font-semibold text-fg", hoveredNode.type === "hla" && "allele")}>{hoveredNode.label}</p>
+            <p className="text-fg-subtle">
               {hoveredNode.type === "hla"
                 ? "Allèle HLA"
-                : `Complication · ${hoveredNode.category ?? "—"}`}
+                : `Complication · ${hoveredNode.category ? categoryDisplay(hoveredNode.category) : "—"}`}
             </p>
-            <ul className="mt-1 space-y-0.5">
+            <ul className="mt-2 space-y-1">
               {drawableEdges
                 .filter(
                   (e: GraphEdge) =>
@@ -411,8 +412,14 @@ export default function GraphExplorer({
                 )
                 .slice(0, 5)
                 .map((e) => (
-                  <li key={e.id} className={SIGNAL_DISPLAY[e.signalLevel].tone}>
-                    {SIGNAL_DISPLAY[e.signalLevel].dots}{" "}
+                  <li
+                    key={e.id}
+                    className={cn(
+                      "flex items-center gap-1.5",
+                      SIGNAL_DISPLAY[e.signalLevel].tone,
+                    )}
+                  >
+                    <SignalGlyph level={e.signalLevel} />
                     {SIGNAL_DISPLAY[e.signalLevel].label}
                     {e.majorityNegative ? " · majoritairement nié" : ""}
                   </li>
@@ -423,13 +430,37 @@ export default function GraphExplorer({
       </div>
 
       {/* -------- Legende -------- */}
-      <div className="flex flex-wrap gap-x-6 gap-y-2 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-        <span>● Allèle HLA</span>
-        <span>■ Complication (couleur = catégorie clinique)</span>
-        <span>— Co-occurrence majoritairement affirmée</span>
-        <span>--- Co-occurrence majoritairement niée</span>
-        <span>Trait pâle = non significatif (atténué, jamais masqué)</span>
-        <span>Épaisseur = force qualitative du signal</span>
+      <div className="grid gap-4 rounded-xl border border-line bg-surface-muted/60 p-4 text-xs text-fg-muted sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <p className="eyebrow">Nœuds</p>
+          <p className="flex items-center gap-2">
+            <span aria-hidden="true" className="h-3 w-3 rounded-full bg-hla-class-1" />
+            <span aria-hidden="true" className="-ml-1 h-3 w-3 rounded-full bg-hla-class-2" />
+            Allèle HLA (classe I foncé, classe II clair)
+          </p>
+          <p className="flex items-center gap-2">
+            <span aria-hidden="true" className="h-3 w-3 rounded-[3px] bg-cat-rejet" />
+            Complication (couleur = catégorie clinique)
+          </p>
+          <p className="flex flex-wrap gap-x-3 gap-y-1 pl-5">
+            {CATEGORIES.map((category) => (
+              <span key={category} className="inline-flex items-center gap-1">
+                <span
+                  aria-hidden="true"
+                  className={cn("h-2 w-2 rounded-[2px]", categoryClasses(category).bg)}
+                />
+                {categoryDisplay(category)}
+              </span>
+            ))}
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <p className="eyebrow">Liens</p>
+          <p>— Co-occurrence majoritairement affirmée</p>
+          <p>--- Co-occurrence majoritairement niée</p>
+          <p>Trait pâle = non significatif (atténué, jamais masqué)</p>
+          <p>Épaisseur = force qualitative du signal</p>
+        </div>
       </div>
     </div>
   );

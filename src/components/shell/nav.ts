@@ -40,6 +40,11 @@ export const NAV_ITEMS: NavItem[] = [
     label: "Méthode",
     description: "Ce que mesurent les chiffres, et leurs limites",
   },
+  {
+    href: "/guide",
+    label: "Guide",
+    description: "Mode d'emploi : que faire selon votre besoin",
+  },
 ];
 
 export function isActive(pathname: string, href: string): boolean {

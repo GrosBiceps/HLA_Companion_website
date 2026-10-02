@@ -122,7 +122,7 @@ describe("getNeighborhood — navigation bidirectionnelle", () => {
 describe("getNeighborhood — negations et non significatif", () => {
   /**
    * Regle transverse : les negations et le non significatif ne sont JAMAIS
-   * masques par defaut. Le corpus A est majoritairement `weak` (110 / 127) :
+   * masques par defaut. Le corpus A est majoritairement `weak` (~93 %) :
    * si le defaut filtrait quoi que ce soit, le graphe serait presque vide.
    */
   it("sans minSignal, les aretes faibles sont presentes", () => {
@@ -161,11 +161,13 @@ describe("getNeighborhood — negations et non significatif", () => {
 
 describe("truncateBySignal — plafond anti-hairball", () => {
   /**
-   * POURQUOI UN TEST SYNTHETIQUE ICI. Le corpus A sature a 54 noeuds
-   * (profondeur 5) : il ne peut pas atteindre 150, la garantie serait donc
-   * invérifiable via `getNeighborhood`. On teste la LOGIQUE de coupe
-   * directement, sur un graphe construit pour depasser le plafond — la
-   * garantie porte sur le code, pas sur ce corpus-ci.
+   * POURQUOI UN TEST SYNTHETIQUE ICI. Le corpus A elargi (3 000 articles)
+   * depasse desormais le plafond des la profondeur 2, mais la garantie ne
+   * doit pas dependre de la taille d'un corpus donne. On teste donc la
+   * LOGIQUE de coupe directement, sur un graphe construit pour depasser le
+   * plafond — la garantie porte sur le code, pas sur ce corpus-ci. Le bloc
+   * « plafond en conditions reelles » verifie son branchement dans
+   * `getNeighborhood`.
    */
   function fauxGraphe(nHla: number): { nodes: GraphNode[]; edges: GraphEdge[] } {
     const nodes: GraphNode[] = [
@@ -254,6 +256,26 @@ describe("truncateBySignal — plafond anti-hairball", () => {
     // 4 noeuds `inverse` + le centre = 5.
     for (let i = 0; i < 4; i++) {
       expect(kept.has(`HLA-X*${String(i).padStart(3, "0")}`)).toBe(true);
+    }
+  });
+});
+
+describe("getNeighborhood — plafond en conditions reelles", () => {
+  it("signale la troncature exactement quand le plafond coupe", () => {
+    for (const center of ["HLA-DQB1*02:01", "DSA"]) {
+      for (const depth of [1, 2, 3, 5]) {
+        const g = getNeighborhood(center, depth);
+        expect(g.nodes.length).toBeLessThanOrEqual(GRAPH_NODE_CAP);
+        if (g.truncated) {
+          expect(g.nodes.length).toBe(GRAPH_NODE_CAP);
+          // Le centre survit toujours a la coupe.
+          expect(g.nodes.some((n) => n.id === center)).toBe(true);
+        }
+        const ids = new Set(g.nodes.map((n) => n.id));
+        for (const e of g.edges) {
+          expect(ids.has(e.source) && ids.has(e.target)).toBe(true);
+        }
+      }
     }
   });
 });

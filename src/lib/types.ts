@@ -107,3 +107,59 @@ export interface SearchHit {
   entityId: string;
   label: string;
 }
+
+// --------------------------------------------------------------------------
+// Vues d'ensemble du corpus (matrice, chronologie) — pour les visualisations.
+// --------------------------------------------------------------------------
+
+/** Ligne de la matrice : un allele au niveau de resolution demande. */
+export interface MatrixAllele {
+  hla: string;
+  locus: string;
+  hlaClass: string;
+  nMentions: number;
+}
+
+/** Colonne de la matrice : une complication, libelle clinique joint. */
+export interface MatrixOutcome {
+  outcome: string;
+  /** Libelle AFFICHABLE (table `outcomes`), jamais la cle technique. */
+  label: string;
+  category: string;
+  nMentions: number;
+}
+
+/** Case non vide de la matrice : une ligne de `associations`. */
+export interface AssociationMatrixCell {
+  hla: string;
+  outcome: string;
+  signalLevel: SignalLevel;
+  isSignificant: boolean;
+  nCooccurrence: number;
+  nNegated: number;
+  /**
+   * Metrique brute, pour l'encodage (couleur, tri) uniquement : la regle
+   * epistemique du site interdit de l'AFFICHER par defaut.
+   */
+  npmi: number | null;
+}
+
+/**
+ * Matrice HLA x complication, CREUSE : `cells` ne contient que les paires
+ * effectivement co-citees. Une case absente signifie « jamais co-cite dans
+ * le corpus », pas « signal nul ».
+ */
+export interface AssociationMatrix {
+  resolution: "2-digit" | "4-digit";
+  /** Classe I puis II, loci dans l'ordre A, B, C, DRB1, DQB1, DPB1. */
+  alleles: MatrixAllele[];
+  /** Ordre des categories cliniques (`CATEGORIES`), puis libelle. */
+  outcomes: MatrixOutcome[];
+  cells: AssociationMatrixCell[];
+}
+
+/** Nombre d'articles du corpus pour une annee de publication. */
+export interface PublicationsPerYear {
+  year: number;
+  nArticles: number;
+}

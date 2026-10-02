@@ -11,6 +11,7 @@
 
 import { getDb } from "./db";
 import { CATEGORIES } from "./labels";
+import { LOCUS_ORDER as LOCI_ORDER, MAIN_LOCI } from "./loci";
 import type {
   Article,
   AssociationMatrix,
@@ -25,7 +26,6 @@ import type {
   PairMention,
   Polarity,
   PublicationsPerYear,
-  SearchHit,
   SignalLevel,
 } from "./types";
 
@@ -435,68 +435,12 @@ export function getCorpusStats(): CorpusStats {
 }
 
 // --------------------------------------------------------------------------
-// Recherche unifiee (FTS5)
+// Recherche unifiee : voir search.ts (lecture structuree des alleles et
+// serotypes + FTS5). Reexportee ici, `queries.ts` restant le point d'entree
+// des requetes.
 // --------------------------------------------------------------------------
 
-/**
- * Echappe une saisie utilisateur pour MATCH FTS5.
- *
- * FTS5 possede sa propre syntaxe (`"`, `*`, `:`, `-`, `NEAR`, `OR`...) : une
- * chaine brute comme `"; DROP TABLE articles; --` provoque une erreur de
- * syntaxe qui ferait planter la page. On neutralise tout en emballant chaque
- * jeton dans des guillemets doubles (chaine litterale FTS5), les guillemets
- * internes etant doubles.
- *
- * La base est ouverte en lecture seule : aucune injection ne peut ecrire.
- * Le risque traite ici est la levee d'exception, pas la modification.
- *
- * Les caracteres de controle sont retires EN PREMIER : un NUL survivrait au
- * filtre alphanumerique (`"\0x"` contient bien une lettre) mais tronquerait
- * la chaine C cote SQLite, emportant le guillemet fermant — d'ou une erreur
- * "unterminated string" atteignable depuis `?q=%00x`.
- */
-function escapeFtsQuery(raw: string): string {
-  const tokens = raw
-    .split(/\s+/)
-    .map((t) => t.replace(/\p{C}/gu, "").trim())
-    .filter((t) => t.length > 0)
-    // On retire la ponctuation pure : `--` ou `;` seuls ne sont pas des
-    // termes recherchables et produiraient des tokens vides cote FTS5.
-    .filter((t) => /[\p{L}\p{N}]/u.test(t));
-
-  return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(" ");
-}
-
-interface SearchHitRow {
-  entity_type: EntityType;
-  entity_id: string;
-  label: string;
-}
-
-/**
- * Recherche plein texte sur alleles, complications, articles et auteurs.
- * Retourne `[]` pour une requete vide ou sans terme exploitable.
- */
-export function searchEntities(query: string, limit = 25): SearchHit[] {
-  const match = escapeFtsQuery(query ?? "");
-  if (match.length === 0) return [];
-
-  const rows = getDb()
-    .prepare(
-      `SELECT entity_type, entity_id, label
-         FROM search_index
-        WHERE search_index MATCH ?
-        ORDER BY rank
-        LIMIT ?`,
-    )
-    .all(match, limit) as SearchHitRow[];
-
-  return rows.map((row) => ({
-    entityType: row.entity_type,
-    entityId: row.entity_id,
-    label: row.label,
-  }));
-}
+export { searchEntities } from "./search";
 
 // --------------------------------------------------------------------------
 // Task 8 — navigation inverse (complication -> HLA), article, auteur
@@ -1142,7 +1086,7 @@ export function getDefaultGraphCenter(): string | null {
 // --------------------------------------------------------------------------
 
 /** Ordre des loci dans la matrice : classe I puis classe II. */
-const LOCUS_ORDER = ["A", "B", "C", "DRB1", "DQB1", "DPB1"];
+const LOCUS_ORDER: readonly string[] = LOCI_ORDER;
 
 /**
  * Matrice HLA x complication au niveau de resolution demande (2-digit par
@@ -1161,8 +1105,13 @@ const LOCUS_ORDER = ["A", "B", "C", "DRB1", "DQB1", "DPB1"];
  */
 export function getAssociationMatrix(
   resolution: "2-digit" | "4-digit" = "2-digit",
+  locus?: string,
 ): AssociationMatrix {
   const db = getDb();
+  // Filtre de locus facultatif : un 4-digit complet (~900 lignes) est trop
+  // lourd pour une grille DOM, la page matrice le pagine par locus.
+  const locusFilter = locus ? "AND h.locus = ?" : "";
+  const locusParams = locus ? [locus] : [];
 
   const locusCase = `CASE h.locus ${LOCUS_ORDER.map(
     (l, i) => `WHEN '${l}' THEN ${i}`,
@@ -1176,10 +1125,10 @@ export function getAssociationMatrix(
       .prepare(
         `SELECT h.hla, h.locus, h.hla_class, h.n_mentions
            FROM hla_entities h
-          WHERE h.resolution = ?
+          WHERE h.resolution = ? ${locusFilter}
           ORDER BY h.hla_class ASC, ${locusCase}, h.hla ASC`,
       )
-      .all(resolution) as {
+      .all(resolution, ...locusParams) as {
       hla: string;
       locus: string;
       hla_class: string;
@@ -1218,10 +1167,10 @@ export function getAssociationMatrix(
                 a.n_cooccurrence, a.n_negated, a.npmi
            FROM associations a
            JOIN hla_entities h ON h.hla = a.hla
-          WHERE h.resolution = ?
+          WHERE h.resolution = ? ${locusFilter}
           ORDER BY a.hla ASC, a.outcome ASC`,
       )
-      .all(resolution) as {
+      .all(resolution, ...locusParams) as {
       hla: string;
       outcome: string;
       signal_level: SignalLevel;
@@ -1242,7 +1191,33 @@ export function getAssociationMatrix(
     }),
   );
 
-  return { resolution, alleles, outcomes, cells };
+  return {
+    resolution,
+    locus: locus ?? null,
+    loci: getMatrixLoci(resolution),
+    alleles,
+    outcomes,
+    cells,
+  };
+}
+
+/** Loci portant des alleles a la resolution demandee, avec leur effectif. */
+export function getMatrixLoci(
+  resolution: "2-digit" | "4-digit",
+): { locus: string; n: number }[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT locus, COUNT(*) AS n FROM hla_entities
+        WHERE resolution = ? GROUP BY locus`,
+    )
+    .all(resolution) as { locus: string; n: number }[];
+  const rank = (l: string) => {
+    const i = LOCUS_ORDER.indexOf(l);
+    return i === -1 ? LOCUS_ORDER.length : i;
+  };
+  return rows.sort(
+    (a, b) => rank(a.locus) - rank(b.locus) || a.locus.localeCompare(b.locus),
+  );
 }
 
 /**
@@ -1382,6 +1357,9 @@ export function getLocusOverview(perLocus = 3): LocusOverview[] {
         GROUP BY locus, hla_class`,
     )
     .all() as { locus: string; hla_class: string; n2: number; n4: number }[];
+  // L'accueil presente les six loci du typage de routine ; DRB3/4/5 et DQA1
+  // sont disponibles dans l'index des alleles.
+  const main: readonly string[] = MAIN_LOCI;
   const top = db.prepare(
     `SELECT hla, resolution, n_mentions FROM hla_entities
       WHERE locus = ? AND resolution IN ('2-digit', '4-digit')
@@ -1392,6 +1370,7 @@ export function getLocusOverview(perLocus = 3): LocusOverview[] {
     return i === -1 ? LOCUS_ORDER.length : i;
   };
   return loci
+    .filter((l) => main.includes(l.locus))
     .sort((a, b) => rank(a.locus) - rank(b.locus) || a.locus.localeCompare(b.locus))
     .map((l) => ({
       locus: l.locus,

@@ -27,6 +27,7 @@
  * co-mentions faibles.
  */
 
+import { LOCUS_ORDER as LOCI_ORDER } from "./loci";
 import {
   forceCollide,
   forceLink,
@@ -83,7 +84,7 @@ const ANCHOR_WEIGHT: Record<SignalLevel, number> = {
   weak: 0.25,
 };
 
-const LOCUS_ORDER = ["A", "B", "C", "DRB1", "DQB1", "DPB1"];
+const LOCUS_ORDER: readonly string[] = LOCI_ORDER;
 
 /**
  * Rayon d'un noeud selon son effectif de mentions : aire ~ effectif

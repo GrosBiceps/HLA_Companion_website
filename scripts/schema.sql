@@ -26,6 +26,25 @@ CREATE TABLE corpus_version (
 );
 
 -- =====================================================================
+-- COUCHE 0b - ORGANES (cf. docs/ORGANES.md)
+-- =====================================================================
+-- Un article concerne un ou plusieurs organes. Les statistiques sont
+-- STRATIFIEES : chaque agregat (associations, timeline, comptages...) est
+-- calcule par strate. La strate `all` (sentinelle, voir ALL_ORGANS dans
+-- labels.py) est le corpus entier ; les autres sont des organes. Une strate
+-- a son propre denominateur : aucune ligne ne melange deux strates.
+
+CREATE TABLE organs (
+    organ        TEXT PRIMARY KEY,      -- cle stable : "kidney", "hsct"
+    label        TEXT NOT NULL,         -- "Rein", "Cœur"
+    short_label  TEXT NOT NULL,         -- "GCSH"
+    slug         TEXT NOT NULL UNIQUE,  -- parametre d'URL ?organe=
+    sort_order   INTEGER NOT NULL,
+    n_articles   INTEGER NOT NULL,      -- articles de la strate (recompte)
+    CHECK (organ <> 'all')
+);
+
+-- =====================================================================
 -- COUCHE 1 - SOURCES
 -- =====================================================================
 
@@ -45,6 +64,15 @@ CREATE TABLE articles (
 );
 CREATE INDEX idx_articles_year ON articles(year);
 CREATE INDEX idx_articles_graft ON articles(graft_assignment);
+
+CREATE TABLE article_organs (
+    pmid   TEXT NOT NULL REFERENCES articles(pmid),
+    organ  TEXT NOT NULL REFERENCES organs(organ),
+    is_primary INTEGER NOT NULL DEFAULT 0,  -- 1 = organe principal (premier liste)
+    PRIMARY KEY (pmid, organ),
+    CHECK (is_primary IN (0, 1))
+);
+CREATE INDEX idx_article_organs_organ ON article_organs(organ, pmid);
 
 CREATE TABLE authors (
     author_id       TEXT PRIMARY KEY,   -- slug: "wiebe-c"
@@ -97,6 +125,15 @@ CREATE TABLE outcomes (
     category   TEXT NOT NULL,           -- "Rejet"
     n_mentions INTEGER NOT NULL DEFAULT 0
 );
+
+-- Organes auxquels une complication s'applique (fait de vocabulaire, pas un
+-- resultat : cf. OUTCOME_ORGANS dans labels.py).
+CREATE TABLE outcome_organs (
+    outcome TEXT NOT NULL REFERENCES outcomes(outcome),
+    organ   TEXT NOT NULL REFERENCES organs(organ),
+    PRIMARY KEY (outcome, organ)
+);
+CREATE INDEX idx_outcome_organs_organ ON outcome_organs(organ);
 
 CREATE TABLE hla_mentions (
     mention_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +211,10 @@ CREATE INDEX idx_serotype_alleles_hla ON serotype_alleles(hla);
 -- COUCHE 3 - AGREGATS
 -- =====================================================================
 
+-- `organ` = strate : 'all' (sentinelle) ou une cle de `organs`. Chaque strate a
+-- son denominateur (n_universe) et sa famille FDR.
 CREATE TABLE associations (
+    organ            TEXT NOT NULL DEFAULT 'all',
     hla              TEXT NOT NULL REFERENCES hla_entities(hla),
     outcome          TEXT NOT NULL REFERENCES outcomes(outcome),
     n_cooccurrence   INTEGER NOT NULL,
@@ -197,45 +237,70 @@ CREATE TABLE associations (
     first_year       INTEGER,
     signal_level     TEXT NOT NULL,
     is_significant   INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (hla, outcome),
+    PRIMARY KEY (organ, hla, outcome),
     CHECK (signal_level IN ('inverse','strong','clear','moderate','weak')),
     CHECK (is_significant IN (0, 1))
 );
-CREATE INDEX idx_assoc_fdr ON associations(fdr);
-CREATE INDEX idx_assoc_hla ON associations(hla);
-CREATE INDEX idx_assoc_outcome ON associations(outcome);
+CREATE INDEX idx_assoc_fdr ON associations(organ, fdr);
+CREATE INDEX idx_assoc_hla ON associations(hla, organ);
+CREATE INDEX idx_assoc_outcome ON associations(outcome, organ);
+CREATE INDEX idx_assoc_signal ON associations(organ, signal_level);
 
 CREATE TABLE association_timeline (
+    organ   TEXT NOT NULL DEFAULT 'all',
     hla     TEXT NOT NULL REFERENCES hla_entities(hla),
     outcome TEXT NOT NULL REFERENCES outcomes(outcome),
     year    INTEGER NOT NULL,
     n       INTEGER NOT NULL,
-    PRIMARY KEY (hla, outcome, year)
-);
+    PRIMARY KEY (organ, hla, outcome, year)
+) WITHOUT ROWID;
+
+-- Comptages par strate : articles distincts et lignes de mention de chaque
+-- allele / complication. Precalcules pour que les catalogues et le « Par
+-- organe » des fiches ne recomptent pas les mentions a chaque requete.
+CREATE TABLE hla_organ_counts (
+    organ      TEXT NOT NULL,
+    hla        TEXT NOT NULL REFERENCES hla_entities(hla),
+    n_articles INTEGER NOT NULL,
+    n_mentions INTEGER NOT NULL,
+    PRIMARY KEY (organ, hla)
+) WITHOUT ROWID;
+
+CREATE TABLE outcome_organ_counts (
+    organ      TEXT NOT NULL,
+    outcome    TEXT NOT NULL REFERENCES outcomes(outcome),
+    n_articles INTEGER NOT NULL,
+    n_mentions INTEGER NOT NULL,
+    PRIMARY KEY (organ, outcome)
+) WITHOUT ROWID;
 
 CREATE TABLE graph_edges (
+    organ      TEXT NOT NULL DEFAULT 'all',
     graph_type TEXT NOT NULL,
     source     TEXT NOT NULL,
     target     TEXT NOT NULL,
     weight     REAL NOT NULL,
     polarity   TEXT,
     community  INTEGER,
-    PRIMARY KEY (graph_type, source, target)
+    PRIMARY KEY (organ, graph_type, source, target)
 );
 
 CREATE TABLE node_metrics (
+    organ       TEXT NOT NULL DEFAULT 'all',
     graph_type  TEXT NOT NULL,
     node_id     TEXT NOT NULL,
     degree      INTEGER,
     betweenness REAL,
     eigenvector REAL,
     community   INTEGER,
-    PRIMARY KEY (graph_type, node_id)
+    PRIMARY KEY (organ, graph_type, node_id)
 );
 
 CREATE TABLE annual_counts (
-    year INTEGER PRIMARY KEY,
-    n    INTEGER NOT NULL
+    organ TEXT NOT NULL DEFAULT 'all',
+    year  INTEGER NOT NULL,
+    n     INTEGER NOT NULL,
+    PRIMARY KEY (organ, year)
 );
 
 -- =====================================================================

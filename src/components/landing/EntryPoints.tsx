@@ -53,8 +53,6 @@ function ByAllele({ loci }: { loci: LocusOverview[] }) {
   }));
   return (
     <div className="flex flex-col gap-5 rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
-      {/* TODO(index alleles) : `/allele` (page d'index) est livree par une
-          autre branche ; le lien est pose des maintenant. */}
       <PanelHeader
         icon={<Dna />}
         eyebrow="Par allèle"
@@ -110,8 +108,6 @@ function ByAllele({ loci }: { loci: LocusOverview[] }) {
 function ByComplication({ categories }: { categories: CategoryOverview[] }) {
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
-      {/* TODO(index complications) : `/complication` (page d'index) est
-          livree par une autre branche ; le lien est pose des maintenant. */}
       <PanelHeader
         icon={<Stethoscope />}
         eyebrow="Par complication"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronRight, Quote } from "lucide-react";
 import { SentenceDrawer } from "@/components/SentenceDrawer";
 import { SignalIndicator } from "@/components/SignalIndicator";
@@ -59,8 +59,15 @@ function sci(value: number | null): string {
 
 export function AssociationCard({
   association,
+  title,
 }: {
   association: AssociationRow;
+  /**
+   * Titre de la carte. Par defaut le LIBELLE CLINIQUE de la complication
+   * (fiche allele). La fiche complication passe le nom de l'allele, puisque
+   * la complication y est deja le sujet de la page. Jamais la cle technique.
+   */
+  title?: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -112,7 +119,7 @@ export function AssociationCard({
             muted ? "text-fg-muted" : "text-fg",
           )}
         >
-          {label}
+          {title ?? label}
         </h3>
         <SignalIndicator level={signalLevel} />
       </div>

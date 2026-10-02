@@ -8,6 +8,12 @@ import { cn } from "@/lib/cn";
 import { formatInt, plural } from "@/lib/format";
 import { compactAllele, serotypeKeys } from "@/lib/hla-query";
 import { hlaClassColor } from "@/lib/theme";
+import {
+  ALL_ORGANS,
+  organShortLabel,
+  withOrgan,
+  type OrganSelection,
+} from "@/lib/organ";
 import type { SerotypeKind } from "@/lib/types";
 
 /**
@@ -57,11 +63,11 @@ const KIND_TAG: Partial<Record<SerotypeKind, string>> = {
   cellular: "DPw",
 };
 
-function Card({ card }: { card: SerotypeCard }) {
+function Card({ card, organ }: { card: SerotypeCard; organ: OrganSelection }) {
   const shown = card.direct.slice(0, 3);
   return (
     <Link
-      href={`/serotype/${encodeURIComponent(card.id)}`}
+      href={withOrgan(`/serotype/${encodeURIComponent(card.id)}`, organ)}
       className={cn(
         "group flex min-w-0 flex-col gap-1 rounded-xl border bg-surface px-3.5 py-2.5 shadow-xs transition hover:-translate-y-px hover:border-line-strong hover:shadow-raised",
         card.kind === "broad" ? "border-dashed border-line-strong" : "border-line",
@@ -104,9 +110,11 @@ function Card({ card }: { card: SerotypeCard }) {
 function LocusSection({
   section,
   cards,
+  organ,
 }: {
   section: SerotypeLocusSection;
   cards: SerotypeCard[];
+  organ: OrganSelection;
 }) {
   const ids = new Set(cards.map((c) => c.id));
   // Familles larges (dont au moins un membre est visible), puis specificites seules.
@@ -141,9 +149,9 @@ function LocusSection({
             className="space-y-2 rounded-2xl bg-surface-muted/60 p-3 ring-1 ring-inset ring-line"
           >
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <Card card={fam} />
+              <Card card={fam} organ={organ} />
               {kids.map((k) => (
-                <Card key={k.id} card={k} />
+                <Card key={k.id} card={k} organ={organ} />
               ))}
             </div>
           </div>
@@ -153,7 +161,7 @@ function LocusSection({
       {standalone.length > 0 ? (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {standalone.map((c) => (
-            <Card key={c.id} card={c} />
+            <Card key={c.id} card={c} organ={organ} />
           ))}
         </div>
       ) : null}
@@ -161,23 +169,49 @@ function LocusSection({
   );
 }
 
-export function SerotypeBrowser({ sections }: { sections: SerotypeLocusSection[] }) {
+type Sort = "name" | "articles";
+type Scope = "all" | "cited";
+
+/**
+ * `organ` : strate des effectifs des cartes (« art. » = articles de l'organe).
+ * Dans un organe, la portee par defaut est « cites dans l'organe » ; le tri
+ * « Articles » classe chaque locus du plus au moins cite DANS la strate.
+ * Les liens reportent l'organe.
+ */
+export function SerotypeBrowser({
+  sections,
+  organ = ALL_ORGANS,
+}: {
+  sections: SerotypeLocusSection[];
+  organ?: OrganSelection;
+}) {
   const [query, setQuery] = useState("");
   const [locus, setLocus] = useState<string>("all");
+  const [sort, setSort] = useState<Sort>("name");
+  const [scope, setScope] = useState<Scope>(organ === ALL_ORGANS ? "all" : "cited");
 
   const filtered = useMemo(
     () =>
       sections
         .filter((s) => locus === "all" || s.locus === locus)
-        .map((s) => ({
-          section: s,
-          cards: s.cards.filter((c) => matches(c, query)),
-        }))
+        .map((s) => {
+          let cards = s.cards.filter(
+            (c) => matches(c, query) && (scope === "all" || c.nArticles > 0),
+          );
+          if (sort === "articles") {
+            cards = [...cards].sort((a, b) => b.nArticles - a.nArticles);
+          }
+          return { section: s, cards };
+        })
         .filter((x) => x.cards.length > 0),
-    [sections, query, locus],
+    [sections, query, locus, sort, scope],
   );
   const total = sections.reduce((n, s) => n + s.cards.length, 0);
   const shown = filtered.reduce((n, x) => n + x.cards.length, 0);
+  const citedTotal = sections.reduce(
+    (n, s) => n + s.cards.filter((c) => c.nArticles > 0).length,
+    0,
+  );
 
   return (
     <div className="space-y-6">
@@ -215,6 +249,36 @@ export function SerotypeBrowser({ sections }: { sections: SerotypeLocusSection[]
             ...sections.map((s) => ({ value: s.locus, label: s.locus })),
           ]}
         />
+        <SegmentedControl<Sort>
+          ariaLabel="Tri"
+          value={sort}
+          onChange={setSort}
+          options={[
+            { value: "name", label: "Nomenclature" },
+            {
+              value: "articles",
+              label:
+                organ === ALL_ORGANS
+                  ? "Plus cités"
+                  : `Plus cités : ${organShortLabel(organ)}`,
+            },
+          ]}
+        />
+        {organ !== ALL_ORGANS ? (
+          <SegmentedControl<Scope>
+            ariaLabel="Portée"
+            value={scope}
+            onChange={setScope}
+            options={[
+              { value: "all", label: "Tous", count: total },
+              {
+                value: "cited",
+                label: `Cités : ${organShortLabel(organ)}`,
+                count: citedTotal,
+              },
+            ]}
+          />
+        ) : null}
       </div>
 
       <p className="text-xs text-fg-muted" aria-live="polite">
@@ -230,7 +294,7 @@ export function SerotypeBrowser({ sections }: { sections: SerotypeLocusSection[]
       ) : null}
 
       {filtered.map(({ section, cards }) => (
-        <LocusSection key={section.locus} section={section} cards={cards} />
+        <LocusSection key={section.locus} section={section} cards={cards} organ={organ} />
       ))}
     </div>
   );

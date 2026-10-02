@@ -9,6 +9,13 @@ import { cn } from "@/lib/cn";
 import { formatInt, plural } from "@/lib/format";
 import { hlaClassColor } from "@/lib/theme";
 import {
+  ALL_ORGANS,
+  organLabel,
+  organShortLabel,
+  withOrgan,
+  type OrganSelection,
+} from "@/lib/organ";
+import {
   matchesAlleleQuery,
   serotypeQueryKeys,
   type AlleleTree,
@@ -38,7 +45,7 @@ import {
  * part de « Tous ») ; il dit combien d'entites il retire.
  */
 
-type Scope = "all" | "marked";
+type Scope = "all" | "cited" | "marked";
 
 export interface BrowserSerotype {
   id: string;
@@ -50,14 +57,20 @@ export interface BrowserSerotype {
 /** Au-dela de ce nombre de groupes affiches, le filtre ne deplie rien tout seul. */
 const AUTO_OPEN_MAX_GROUPS = 40;
 
-function href(hla: string): string {
-  return `/allele/${encodeURIComponent(hla)}`;
+function href(hla: string, organ: OrganSelection = ALL_ORGANS): string {
+  return withOrgan(`/allele/${encodeURIComponent(hla)}`, organ);
+}
+
+/** Portee : « cités » = au moins un article dans la strate ; « marked » = au-dessus du seuil. */
+function inScope(a: { nArticles: number; nMarked: number }, scope: Scope): boolean {
+  if (scope === "all") return true;
+  return scope === "cited" ? a.nArticles > 0 : a.nMarked > 0;
 }
 
 type Match = (a: TreeAllele) => boolean;
 
 function keepAllele(a: TreeAllele, match: Match, scope: Scope): boolean {
-  return match(a) && (scope === "all" || a.nMarked > 0);
+  return match(a) && inScope(a, scope);
 }
 
 function filterLocus(
@@ -74,7 +87,7 @@ function filterLocus(
         // Le parent correspond : on garde tous ses enfants filtres par le
         // seul critere de portee, pour montrer la famille complete.
         children: match(a)
-          ? a.children.filter((c) => scope === "all" || c.nMarked > 0)
+          ? a.children.filter((c) => inScope(c, scope))
           : children,
       });
     }
@@ -99,13 +112,20 @@ function MarkedHint({ n }: { n: number }) {
 export function AlleleBrowser({
   tree,
   serotypes = [],
+  organ = ALL_ORGANS,
 }: {
   tree: AlleleTree;
   /** Referentiel serologique, pour reconnaitre « DR15 » dans le filtre. */
   serotypes?: BrowserSerotype[];
+  /**
+   * Strate des effectifs de l'arbre. Dans un organe, la portee par defaut est
+   * « cités dans l'organe » (les ~1 000 entites d'un corpus entier n'ont pas
+   * toutes un article dans une strate de 200). Les liens reportent l'organe.
+   */
+  organ?: OrganSelection;
 }) {
   const [query, setQuery] = useState("");
-  const [scope, setScope] = useState<Scope>("all");
+  const [scope, setScope] = useState<Scope>(organ === ALL_ORGANS ? "all" : "cited");
   // Ouverture manuelle d'un groupe ; absent = valeur par defaut (cf. autoOpen).
   const [override, setOverride] = useState<Record<string, boolean>>({});
 
@@ -183,6 +203,17 @@ export function AlleleBrowser({
 
   // Entites ayant elles-memes au moins une co-occurrence marquee (les
   // 2-digit gardes pour le contexte d'un enfant marque ne comptent pas).
+  const citedTotal = (() => {
+    let n = 0;
+    for (const c of tree.classes)
+      for (const l of c.loci) {
+        n += l.orphans.filter((o) => o.nArticles > 0).length;
+        for (const a of l.alleles) {
+          n += (a.nArticles > 0 ? 1 : 0) + a.children.filter((ch) => ch.nArticles > 0).length;
+        }
+      }
+    return n + tree.others.filter((o) => o.nArticles > 0).length;
+  })();
   const markedTotal =
     tree.classes.reduce(
       (s, c) =>
@@ -242,6 +273,15 @@ export function AlleleBrowser({
           onChange={setScope}
           options={[
             { value: "all", label: "Tous", count: total },
+            ...(organ !== ALL_ORGANS
+              ? [
+                  {
+                    value: "cited" as const,
+                    label: `Cités : ${organShortLabel(organ)}`,
+                    count: citedTotal,
+                  },
+                ]
+              : []),
             {
               value: "marked",
               label: "Au-dessus du seuil",
@@ -266,7 +306,7 @@ export function AlleleBrowser({
                 ci-dessous.
               </span>
               <Link
-                href={`/serotype/${encodeURIComponent(s.id)}`}
+                href={withOrgan(`/serotype/${encodeURIComponent(s.id)}`, organ)}
                 className="link ml-auto font-medium"
               >
                 Fiche du sérotype
@@ -283,6 +323,9 @@ export function AlleleBrowser({
             : `${formatInt(shown)} sur ${plural(total, "entité HLA", "entités HLA")} affichées.`}
           {scope === "marked"
             ? " Filtre actif : seules les entités ayant au moins une co-occurrence au-dessus du seuil sont listées."
+            : ""}
+          {scope === "cited"
+            ? ` Filtre actif : seules les entités citées dans au moins un article (${organLabel(organ)}) sont listées.`
             : ""}
         </p>
         {shownGroups > 0 ? (
@@ -333,6 +376,7 @@ export function AlleleBrowser({
               <LocusCard
                 key={l.locus}
                 locus={l}
+                organ={organ}
                 isOpen={isOpen}
                 onToggle={(hla) =>
                   setOverride((o) => ({ ...o, [hla]: !isOpen(hla) }))
@@ -356,7 +400,7 @@ export function AlleleBrowser({
             {others.map((o) => (
               <li key={o.hla}>
                 <Link
-                  href={href(o.hla)}
+                  href={href(o.hla, organ)}
                   className="inline-flex items-center gap-2 rounded-lg bg-surface px-3 py-1.5 text-sm shadow-xs ring-1 ring-inset ring-line hover:ring-line-strong"
                 >
                   <AlleleName hla={o.hla} className="text-fg" />
@@ -376,10 +420,12 @@ export function AlleleBrowser({
 
 function LocusCard({
   locus,
+  organ,
   isOpen,
   onToggle,
 }: {
   locus: TreeLocus;
+  organ: OrganSelection;
   isOpen: (hla: string) => boolean;
   onToggle: (hla: string) => void;
 }) {
@@ -409,7 +455,7 @@ function LocusCard({
           return (
             <li key={a.hla} className="px-3 py-1.5 sm:px-4">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <Link href={href(a.hla)} className="group min-w-0">
+                <Link href={href(a.hla, organ)} className="group min-w-0">
                   <AlleleName
                     hla={a.hla}
                     className="text-sm font-semibold text-fg group-hover:text-primary group-hover:underline"
@@ -418,7 +464,7 @@ function LocusCard({
                 {(a.serotypes ?? []).slice(0, 3).map((s) => (
                   <Link
                     key={s}
-                    href={`/serotype/${encodeURIComponent(s)}`}
+                    href={withOrgan(`/serotype/${encodeURIComponent(s)}`, organ)}
                     title={`Sérotype ${s}`}
                     className="rounded-full bg-surface-muted px-1.5 py-px text-2xs font-medium text-fg-muted ring-1 ring-inset ring-line hover:text-primary hover:ring-primary/40"
                   >
@@ -461,7 +507,7 @@ function LocusCard({
                   {a.children.map((c) => (
                     <li key={c.hla}>
                       <Link
-                        href={href(c.hla)}
+                        href={href(c.hla, organ)}
                         title={`${c.hla} — ${plural(c.nArticles, "article")}`}
                         className={cn(
                           "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs ring-1 ring-inset transition-colors",
@@ -487,7 +533,7 @@ function LocusCard({
         {locus.orphans.map((o) => (
           <li key={o.hla} className="flex items-center gap-2 px-4 py-2">
             <Link
-              href={href(o.hla)}
+              href={href(o.hla, organ)}
               className="min-w-0 flex-1 text-sm hover:text-primary"
             >
               <AlleleName hla={o.hla} />

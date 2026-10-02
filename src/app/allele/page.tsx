@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 import { Callout, PageHeader, StatTile } from "@/components/ui";
 import { AlleleBrowser } from "@/components/entity/AlleleBrowser";
 import { buildAlleleTree } from "@/lib/allele-tree";
+import { OrganStrip } from "@/components/organ/OrganChip";
 import { formatInt } from "@/lib/format";
-import { getAlleleCatalog } from "@/lib/queries";
+import { getAlleleCatalog, getCorpusStats, getOrgans } from "@/lib/queries";
+import { organFromPage, type PageSearchParams } from "@/lib/organ";
 import { getSerotypeCatalog, getSerotypeIdsByAllele } from "@/lib/serotypes";
 
 /**
@@ -18,6 +20,10 @@ import { getSerotypeCatalog, getSerotypeIdsByAllele } from "@/lib/serotypes";
  *
  * Les ancres `#classe-I`, `#classe-II` et `#locus-<X>` sont la cible des
  * maillons « classe » et « locus » du fil d'Ariane des fiches allele.
+ *
+ * ORGANE. `?organe=coeur` recalcule les effectifs (articles, co-occurrences
+ * au-dessus du seuil de CETTE strate) ; la portee par defaut du navigateur est
+ * « cites dans l'organe ». Le bandeau « Trier par organe » change de strate.
  */
 export const metadata: Metadata = {
   title: "Allèles HLA — index du corpus",
@@ -26,22 +32,31 @@ export const metadata: Metadata = {
     "résolution. Co-occurrences textuelles, pas des associations cliniques.",
 };
 
-export default function AlleleIndexPage() {
+export default async function AlleleIndexPage({
+  searchParams,
+}: {
+  searchParams?: PageSearchParams;
+} = {}) {
+  const organ = await organFromPage(searchParams);
+  const organs = getOrgans();
+  const stratum = organs.find((o) => o.key === organ);
   const serotypeIds = getSerotypeIdsByAllele();
-  const catalog = getAlleleCatalog().map((e) => ({
+  const catalog = getAlleleCatalog(organ).map((e) => ({
     ...e,
     serotypes: serotypeIds.get(e.hla)?.specific ?? [],
     broadSerotypes: serotypeIds.get(e.hla)?.broad ?? [],
   }));
-  const serotypes = getSerotypeCatalog().map((s) => ({
+  const serotypes = getSerotypeCatalog(organ).map((s) => ({
     id: s.serotypeId,
     label: s.label,
     kind: s.kind,
     nAlleles: s.nGroups + s.nAlleles,
   }));
   const tree = buildAlleleTree(catalog);
-  const n2 = catalog.filter((e) => e.resolution === "2-digit").length;
-  const n4 = catalog.filter((e) => e.resolution === "4-digit").length;
+  // Dans un organe, les nombres comptent les entites CITEES dans la strate.
+  const present = (e: { nArticles: number }) => organ === "all" || e.nArticles > 0;
+  const n2 = catalog.filter((e) => e.resolution === "2-digit" && present(e)).length;
+  const n4 = catalog.filter((e) => e.resolution === "4-digit" && present(e)).length;
   const nLoci = tree.classes.reduce((s, c) => s + c.loci.length, 0);
   const nWithSignal = catalog.filter((e) => e.nMarked > 0).length;
 
@@ -52,6 +67,16 @@ export default function AlleleIndexPage() {
         title="Allèles HLA du corpus"
         description="La nomenclature telle que l'extraction l'a rencontrée : classe, locus, puis résolution 2-digit et 4-digit. Chaque forme a sa fiche et ses propres articles. Le filtre comprend aussi les sérotypes (DR15, B27…)."
       />
+
+      <OrganStrip
+        baseHref="/allele"
+        selected={organ}
+        counts={Object.fromEntries(organs.map((o) => [o.key, o.nArticles]))}
+        allCount={getCorpusStats().nArticles}
+        stratum={{ nArticles: stratum?.nArticles, nTotal: getCorpusStats().nArticles }}
+        hint="Effectifs : articles de chaque organe. Choisir un organe recalcule les articles et les co-occurrences marquées de chaque allèle sur ses seuls articles."
+      />
+
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Loci" value={nLoci} hint="classes I et II" />
@@ -91,7 +116,7 @@ export default function AlleleIndexPage() {
         </p>
       </Callout>
 
-      <AlleleBrowser tree={tree} serotypes={serotypes} />
+      <AlleleBrowser key={organ} tree={tree} serotypes={serotypes} organ={organ} />
     </div>
   );
 }

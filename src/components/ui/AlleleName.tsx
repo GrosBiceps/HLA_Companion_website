@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cn } from "@/lib/cn";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 
 /**
  * Nom d'allele en notation IPD-IMGT (« HLA-DQB1*02:01 »), en chasse fixe.
@@ -15,10 +16,13 @@ export function AlleleName({
   hla,
   href,
   className,
+  organ = ALL_ORGANS,
 }: {
   hla: string;
   href?: string | true;
   className?: string;
+  /** Strate reportee sur le lien `href === true` (fiche de l'allele). */
+  organ?: OrganSelection;
 }) {
   const hasPrefix = hla.startsWith("HLA-");
   const body = (
@@ -32,7 +36,11 @@ export function AlleleName({
   if (href) {
     return (
       <Link
-        href={href === true ? `/allele/${encodeURIComponent(hla)}` : href}
+        href={
+          href === true
+            ? withOrgan(`/allele/${encodeURIComponent(hla)}`, organ)
+            : href
+        }
         className={cn(
           classes,
           "text-primary underline decoration-primary/30 underline-offset-[3px] hover:decoration-primary",

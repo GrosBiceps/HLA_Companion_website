@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { FileText } from "lucide-react";
+import { OrganBadges } from "@/components/organ/OrganChip";
 import { plural } from "@/lib/format";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 import type { ArticleSummary } from "@/lib/queries";
 
 /**
@@ -13,7 +15,10 @@ import type { ArticleSummary } from "@/lib/queries";
 export function ArticleSummaryList({
   articles,
   partnerUnit,
+  organ = ALL_ORGANS,
 }: {
+  /** Strate : reportee sur les liens ; les puces d'organe des articles y mènent. */
+  organ?: OrganSelection;
   articles: ArticleSummary[];
   /** Ce que sont les partenaires : « complication » ou « allèle ». */
   partnerUnit: string;
@@ -28,7 +33,7 @@ export function ArticleSummaryList({
           />
           <div className="min-w-0 flex-1">
             <Link
-              href={`/article/${encodeURIComponent(a.pmid)}`}
+              href={withOrgan(`/article/${encodeURIComponent(a.pmid)}`, organ)}
               className="font-serif text-[0.975rem] font-semibold leading-snug text-fg hover:text-primary hover:underline hover:decoration-primary/40 hover:underline-offset-[3px]"
             >
               {a.title}
@@ -46,6 +51,7 @@ export function ArticleSummaryList({
               · <span className="tabular">{a.year}</span> ·{" "}
               <span className="allele text-fg-subtle">PMID {a.pmid}</span>
             </p>
+            <OrganBadges organs={a.organs} selected={organ} className="mt-1.5" />
             <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-2xs text-fg-subtle">
               <span className="tabular">
                 {plural(a.nSentences, "phrase")} de co-mention ·{" "}

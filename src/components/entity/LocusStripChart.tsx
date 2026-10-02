@@ -3,6 +3,7 @@ import { SIGNAL_LEVELS } from "@/lib/labels";
 import { SIGNAL_DISPLAY } from "@/lib/signal";
 import { CHART_NEUTRALS, SIGNAL_COLORS, hlaClassColor } from "@/lib/theme";
 import { plural } from "@/lib/format";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 import type { SignalLevel } from "@/lib/types";
 import { SignalLegend } from "./SignalLegend";
 
@@ -48,7 +49,14 @@ export function stripTicks(max: number): number[] {
   return [0, ...within.slice(-4)];
 }
 
-export function LocusStripChart({ groups }: { groups: StripGroup[] }) {
+export function LocusStripChart({
+  groups,
+  organ = ALL_ORGANS,
+}: {
+  groups: StripGroup[];
+  /** Strate reportee sur les liens vers les fiches. */
+  organ?: OrganSelection;
+}) {
   const all = groups.flatMap((g) => g.points);
   const max = Math.max(1, ...all.map((p) => p.nCooccurrence));
   const x = (n: number) => (Math.sqrt(n) / Math.sqrt(max)) * 100;
@@ -107,7 +115,7 @@ export function LocusStripChart({ groups }: { groups: StripGroup[] }) {
                   return (
                     <Link
                       key={p.hla}
-                      href={`/allele/${encodeURIComponent(p.hla)}`}
+                      href={withOrgan(`/allele/${encodeURIComponent(p.hla)}`, organ)}
                       title={`${p.hla} — ${plural(p.nCooccurrence, "article")}${
                         p.nNegated > 0
                           ? `, dont ${p.nNegated} au sens négatif`

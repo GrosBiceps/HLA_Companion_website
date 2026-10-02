@@ -5,6 +5,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { cn } from "@/lib/cn";
 import { formatInt, plural } from "@/lib/format";
 import type { AlleleChildSummary } from "@/lib/allele-nav";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 import type { HlaEntity } from "@/lib/types";
 
 /**
@@ -24,17 +25,19 @@ import type { HlaEntity } from "@/lib/types";
 /** Nombre de tuiles visibles avant « Voir les N autres ». */
 const VISIBLE = 12;
 
-function href(hla: string): string {
-  return `/allele/${encodeURIComponent(hla)}`;
+function href(hla: string, organ: OrganSelection): string {
+  return withOrgan(`/allele/${encodeURIComponent(hla)}`, organ);
 }
 
 function Tile({
   item,
   max,
+  organ,
   current = false,
 }: {
   item: AlleleChildSummary;
   max: number;
+  organ: OrganSelection;
   current?: boolean;
 }) {
   const width = Math.max(4, Math.round((item.nArticles / Math.max(1, max)) * 100));
@@ -77,7 +80,7 @@ function Tile({
   }
   return (
     <Link
-      href={href(item.hla)}
+      href={href(item.hla, organ)}
       title={`${item.hla} — ${plural(item.nArticles, "article")}`}
       className="block rounded-lg bg-surface px-3 py-2 ring-1 ring-inset ring-line transition-colors hover:bg-surface-muted hover:ring-line-strong"
     >
@@ -89,10 +92,12 @@ function Tile({
 function TileGrid({
   items,
   max,
+  organ,
   currentHla,
 }: {
   items: AlleleChildSummary[];
   max: number;
+  organ: OrganSelection;
   currentHla?: string;
 }) {
   const head = items.slice(0, VISIBLE);
@@ -104,7 +109,7 @@ function TileGrid({
       <ul className={grid}>
         {head.map((item) => (
           <li key={item.hla}>
-            <Tile item={item} max={max} current={item.hla === currentHla} />
+            <Tile item={item} max={max} organ={organ} current={item.hla === currentHla} />
           </li>
         ))}
       </ul>
@@ -119,7 +124,7 @@ function TileGrid({
           <ul className={cn(grid, "mt-2")}>
             {tail.map((item) => (
               <li key={item.hla}>
-                <Tile item={item} max={max} current={item.hla === currentHla} />
+                <Tile item={item} max={max} organ={organ} current={item.hla === currentHla} />
               </li>
             ))}
           </ul>
@@ -135,7 +140,10 @@ export function ResolutionNav({
   parentCount,
   children,
   siblings,
+  organ = ALL_ORGANS,
 }: {
+  /** Strate des effectifs ; reportee sur les liens. */
+  organ?: OrganSelection;
   allele: HlaEntity;
   parent: HlaEntity | null;
   /** Articles distincts du groupe parent. */
@@ -155,7 +163,7 @@ export function ResolutionNav({
           description={`Chaque allèle 4-digit a sa propre fiche, ses propres articles et ses propres co-occurrences. Triés par nombre d'articles.`}
         />
         <div className="mt-4">
-          <TileGrid items={children} max={max} />
+          <TileGrid items={children} max={max} organ={organ} />
         </div>
         <p className="mt-3 text-2xs leading-relaxed text-fg-subtle">
           Nombres : articles mentionnant explicitement chaque forme. Ils ne
@@ -174,7 +182,7 @@ export function ResolutionNav({
           <div className="space-y-2">
             <p className="eyebrow">Du 4-digit au 2-digit</p>
             <Link
-              href={href(parent.hla)}
+              href={href(parent.hla, organ)}
               className="block rounded-xl bg-surface-muted px-4 py-3 ring-1 ring-inset ring-line transition-colors hover:bg-primary-soft hover:ring-primary/30"
             >
               <span className="flex items-center gap-2 text-xs text-fg-subtle">
@@ -194,7 +202,7 @@ export function ResolutionNav({
                 : "Seul allèle 4-digit de ce groupe dans le corpus"}
             </p>
             {others.length > 0 ? (
-              <TileGrid items={siblings} max={max} currentHla={allele.hla} />
+              <TileGrid items={siblings} max={max} organ={organ} currentHla={allele.hla} />
             ) : null}
           </div>
         </div>

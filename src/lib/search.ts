@@ -16,10 +16,17 @@
  * ENFANTS (alleles 4-digit du groupe, alleles du serotype), marques
  * `childOf` : c'est ainsi que la recherche « offre » le passage du 2-digit
  * au 4-digit, ou d'un serotype a ses alleles.
+ *
+ * ORGANE. Avec un `organ` (strate), les effectifs affiches sont CEUX DE LA
+ * STRATE (« 12 articles · Cœur ») ; les articles et les auteurs sont filtres
+ * (un article n'apparait que s'il concerne l'organe). Les alleles, serotypes
+ * et complications restent trouvables meme a effectif nul dans la strate : la
+ * recherche est une navigation, et « 0 article » est une information.
  */
 
 import type Database from "better-sqlite3";
 import { getDb } from "./db";
+import { ALL_ORGANS, organShortLabel, type OrganSelection } from "./organ";
 import {
   parseAlleleQuery,
   serotypeKeys,
@@ -90,6 +97,8 @@ interface AlleleRec {
 }
 
 interface SearchIndex {
+  /** Strate des effectifs de cet index. */
+  organ: OrganSelection;
   byHla: Map<string, AlleleRec>;
   /** Enfants 4-digit d'un 2-digit, du plus cite au moins cite. */
   childrenOf: Map<string, AlleleRec[]>;
@@ -99,7 +108,10 @@ interface SearchIndex {
   serotypeByKey: Map<string, SerotypeCatalogEntry>;
 }
 
-const indexCache = new WeakMap<Database.Database, SearchIndex>();
+const indexCache = new WeakMap<
+  Database.Database,
+  Map<OrganSelection, SearchIndex>
+>();
 
 function byCitations(a: AlleleRec, b: AlleleRec): number {
   return (
@@ -108,17 +120,22 @@ function byCitations(a: AlleleRec, b: AlleleRec): number {
   );
 }
 
-function getIndex(db: Database.Database): SearchIndex {
-  const cached = indexCache.get(db);
+function getIndex(db: Database.Database, organ: OrganSelection): SearchIndex {
+  let perOrgan = indexCache.get(db);
+  if (!perOrgan) {
+    perOrgan = new Map();
+    indexCache.set(db, perOrgan);
+  }
+  const cached = perOrgan.get(organ);
   if (cached) return cached;
 
   const counts = new Map(
     (
       db
         .prepare(
-          `SELECT hla, COUNT(DISTINCT pmid) AS n FROM hla_mentions GROUP BY hla`,
+          `SELECT hla, n_articles AS n FROM hla_organ_counts WHERE organ = ?`,
         )
-        .all() as { hla: string; n: number }[]
+        .all(organ) as { hla: string; n: number }[]
     ).map((r) => [r.hla, r.n]),
   );
   const rows = db
@@ -163,7 +180,7 @@ function getIndex(db: Database.Database): SearchIndex {
   // tables : la recherche d'alleles doit continuer de fonctionner.
   let serotypes: SerotypeCatalogEntry[] = [];
   try {
-    serotypes = getSerotypeCatalog();
+    serotypes = getSerotypeCatalog(organ);
   } catch {
     serotypes = [];
   }
@@ -171,8 +188,8 @@ function getIndex(db: Database.Database): SearchIndex {
     serotypes.map((s) => [s.serotypeId.toUpperCase(), s]),
   );
 
-  const index = { byHla, childrenOf, groupsOf, serotypes, serotypeByKey };
-  indexCache.set(db, index);
+  const index = { organ, byHla, childrenOf, groupsOf, serotypes, serotypeByKey };
+  perOrgan.set(organ, index);
   return index;
 }
 
@@ -185,6 +202,11 @@ const MAX_CHILDREN = 6;
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n > 1 ? many : one}`;
+}
+
+/** Suffixe d'un effectif de strate : « · Cœur » (vide pour tous les organes). */
+function organTail(organ: OrganSelection): string {
+  return organ === ALL_ORGANS ? "" : ` · ${organShortLabel(organ)}`;
 }
 
 function alleleHit(rec: AlleleRec, index: SearchIndex, childOf?: string): SearchHit {
@@ -201,9 +223,10 @@ function alleleHit(rec: AlleleRec, index: SearchIndex, childOf?: string): Search
       children.length > 0
         ? `${plural(children.length, "allèle")} 4-digit · ${plural(rec.nArticles, "article")}`
         : plural(rec.nArticles, "article");
+    detail += organTail(index.organ);
   } else {
     badge = "4-digit";
-    detail = plural(rec.nArticles, "article");
+    detail = plural(rec.nArticles, "article") + organTail(index.organ);
   }
   return {
     entityType: "allele",
@@ -225,13 +248,14 @@ const KIND_BADGE: Record<string, string> = {
 
 function serotypeHit(
   s: SerotypeCatalogEntry,
+  organ: OrganSelection,
   childOf?: string,
   detailOverride?: string,
 ): SearchHit {
   const parts: string[] = [];
   if (s.broadSerotype) parts.push(`famille ${s.broadSerotype}`);
   parts.push(plural(s.nGroups + s.nAlleles, "allèle"));
-  parts.push(plural(s.nArticles, "article"));
+  parts.push(plural(s.nArticles, "article") + organTail(organ));
   return {
     entityType: "serotype",
     entityId: s.serotypeId,
@@ -336,7 +360,7 @@ function serotypeChildren(
         .map((n) => index.serotypeByKey.get(n.serotypeId.toUpperCase()))
         .filter((n): n is SerotypeCatalogEntry => n !== undefined)
         .slice(0, MAX_CHILDREN)
-        .map((n) => serotypeHit(n, s.serotypeId));
+        .map((n) => serotypeHit(n, index.organ, s.serotypeId));
     }
   }
   const members = getSerotypeMembers(s.serotypeId);
@@ -372,6 +396,7 @@ function serotypesOfAllele(
     hits.push(
       serotypeHit(
         s,
+        index.organ,
         undefined,
         `sérotype correspondant · ${plural(s.nGroups + s.nAlleles, "allèle")}`,
       ),
@@ -404,12 +429,17 @@ const TYPE_ORDER: EntityType[] = [
  * `limit` borne la part plein texte ; les resultats structures (au plus une
  * vingtaine) s'y ajoutent.
  */
-export function searchEntities(query: string, limit = 25): SearchHit[] {
+export function searchEntities(
+  query: string,
+  limit = 25,
+  organ: OrganSelection = ALL_ORGANS,
+): SearchHit[] {
   const raw = (query ?? "").replace(/\p{C}/gu, " ").trim();
   if (raw.length === 0) return [];
 
   const db = getDb();
-  const index = getIndex(db);
+  const index = getIndex(db, organ);
+  const byOrgan = organ !== ALL_ORGANS;
 
   // --- 1. Lecture structuree -------------------------------------------
   const allele = parseAlleleQuery(raw);
@@ -418,11 +448,11 @@ export function searchEntities(query: string, limit = 25): SearchHit[] {
 
   const serotypeHits: SearchHit[] = [];
   exact.forEach((s, i) => {
-    serotypeHits.push(serotypeHit(s));
+    serotypeHits.push(serotypeHit(s, organ));
     // Seule la premiere correspondance exacte deploie ses alleles.
     if (i === 0) serotypeHits.push(...serotypeChildren(s, index));
   });
-  for (const s of prefix.slice(0, 6)) serotypeHits.push(serotypeHit(s));
+  for (const s of prefix.slice(0, 6)) serotypeHits.push(serotypeHit(s, organ));
 
   // Un groupe ou un allele cherche : proposer le serotype correspondant.
   if (allele && alleleHits.length > 0 && exact.length === 0) {
@@ -451,11 +481,38 @@ export function searchEntities(query: string, limit = 25): SearchHit[] {
             ORDER BY rank
             LIMIT ?`,
         )
-        .all(match, limit) as SearchHitRow[])
+        // Dans un organe, une partie des articles et des auteurs est ecartee
+        // apres coup : on lit plus large pour en garder `limit`.
+        .all(match, byOrgan ? limit * 6 : limit) as SearchHitRow[])
     : [];
+
+  const inOrgan = byOrgan
+    ? {
+        article: db.prepare(
+          `SELECT 1 FROM article_organs WHERE pmid = ? AND organ = ?`,
+        ),
+        author: db.prepare(
+          `SELECT 1 FROM article_authors aa
+             JOIN article_organs ao ON ao.pmid = aa.pmid AND ao.organ = ?
+            WHERE aa.author_id = ? LIMIT 1`,
+        ),
+        outcome: db.prepare(
+          `SELECT n_articles FROM outcome_organ_counts
+            WHERE organ = ? AND outcome = ?`,
+        ),
+      }
+    : null;
 
   const ftsHits: SearchHit[] = [];
   for (const row of ftsRows) {
+    if (ftsHits.length >= limit) break;
+    // Un article ou un auteur hors de l'organe n'est pas un resultat.
+    if (inOrgan && row.entity_type === "article") {
+      if (!inOrgan.article.get(row.entity_id, organ)) continue;
+    }
+    if (inOrgan && row.entity_type === "author") {
+      if (!inOrgan.author.get(organ, row.entity_id)) continue;
+    }
     // La lecture structuree fait deja autorite pour les alleles et les
     // serotypes : le plein texte ne les redit pas.
     if (structured && (row.entity_type === "allele" || row.entity_type === "serotype")) {
@@ -472,9 +529,24 @@ export function searchEntities(query: string, limit = 25): SearchHit[] {
       const s = index.serotypeByKey.get(row.entity_id.toUpperCase());
       ftsHits.push(
         s
-          ? serotypeHit(s)
+          ? serotypeHit(s, organ)
           : { entityType: "serotype", entityId: row.entity_id, label: row.label },
       );
+    } else if (inOrgan && row.entity_type === "outcome") {
+      // Complication : l'effectif de la strate (0 si elle n'y apparait pas).
+      const n =
+        (
+          inOrgan.outcome.get(organ, row.entity_id) as
+            | { n_articles: number }
+            | undefined
+        )?.n_articles ?? 0;
+      ftsHits.push({
+        entityType: "outcome",
+        entityId: row.entity_id,
+        label: row.label,
+        nArticles: n,
+        detail: plural(n, "article") + organTail(organ),
+      });
     } else {
       ftsHits.push({
         entityType: row.entity_type,

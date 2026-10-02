@@ -13,6 +13,7 @@
  *  - `visible: true` : la paire est dessinee.
  */
 
+import type { OrganSelection } from "./organ";
 import type {
   AssociationMatrix,
   MatrixAllele,
@@ -32,6 +33,8 @@ export interface ClientMatrixCell {
 }
 
 export interface ClientMatrix {
+  /** Strate de la matrice (`all` ou un organe) : reportee sur les liens. */
+  organ?: OrganSelection;
   resolution: "2-digit" | "4-digit";
   /** Locus affiche (null : tous les loci). */
   locus?: string | null;
@@ -40,6 +43,8 @@ export interface ClientMatrix {
   alleles: MatrixAllele[];
   outcomes: MatrixOutcome[];
   cells: ClientMatrixCell[];
+  /** Paires d'autres organes (articles multi-organes), non dessinees ici. */
+  nCellsOutsideOrgan?: number;
 }
 
 /**
@@ -50,11 +55,13 @@ export interface ClientMatrix {
  */
 export function toClientMatrix(m: AssociationMatrix): ClientMatrix {
   return {
+    organ: m.organ ?? "all",
     resolution: m.resolution,
     locus: m.locus ?? null,
     loci: m.loci ?? [],
     alleles: m.alleles,
     outcomes: m.outcomes,
+    nCellsOutsideOrgan: m.nCellsOutsideOrgan ?? 0,
     cells: m.cells.map((c) => ({
       hla: c.hla,
       outcome: c.outcome,

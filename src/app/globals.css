@@ -82,11 +82,26 @@
     --cat-neoplasie: 192 80 143;    /* #C0508F */
     --cat-metabolique: 194 147 24;  /* #C29318 */
     --cat-recidive: 140 106 78;     /* #8C6A4E */
+    --cat-gvh: 111 154 31;          /* #6F9A1F */
+    --cat-survie: 95 122 138;       /* #5F7A8A */
     --cat-other: 122 129 148;       /* #7A8194 */
 
     /* Classes HLA — meme famille indigo, separees par la luminance. */
     --hla-class-1: 58 67 159;       /* #3A439F */
     --hla-class-2: 124 136 221;     /* #7C88DD */
+
+    /* ── ORGANES ────────────────────────────────────────────────────────
+       Sept teintes (famille « muted » de Tol, sure en daltonisme) + un neutre
+       pour « tous les organes ». Toujours doublees d'un libelle ET d'une
+       forme (cf. ORGAN_SHAPES dans theme.ts). */
+    --organ-kidney: 176 74 94;      /* #B04A5E */
+    --organ-liver: 168 134 28;      /* #A8861C */
+    --organ-heart: 138 31 85;       /* #8A1F55 */
+    --organ-lung: 60 141 190;       /* #3C8DBE */
+    --organ-hsct: 139 63 148;       /* #8B3F94 */
+    --organ-pancreas: 122 127 31;   /* #7A7F1F */
+    --organ-intestine: 42 140 124;  /* #2A8C7C */
+    --organ-all: 100 105 124;       /* #64697C */
 
     /* Surlignage des spans extraits (phrases sources). */
     --mark-hla: 215 227 251;        /* #D7E3FB */
@@ -160,10 +175,21 @@
       --cat-neoplasie: 226 125 182;
       --cat-metabolique: 226 183 63;
       --cat-recidive: 192 154 122;
+      --cat-gvh: 169 208 74;
+      --cat-survie: 157 181 196;
       --cat-other: 154 161 179;
 
       --hla-class-1: 142 153 240;
       --hla-class-2: 195 202 248;
+
+      --organ-kidney: 229 140 157;
+      --organ-liver: 227 206 114;
+      --organ-heart: 216 106 166;
+      --organ-lung: 140 203 240;
+      --organ-hsct: 201 138 208;
+      --organ-pancreas: 190 196 80;
+      --organ-intestine: 92 197 179;
+      --organ-all: 139 145 163;
 
       --mark-hla: 36 54 95;
       --mark-hla-fg: 214 226 255;

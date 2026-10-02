@@ -6,7 +6,13 @@ import {
   type SerotypeCard,
   type SerotypeLocusSection,
 } from "@/components/entity/SerotypeBrowser";
+import { OrganStrip } from "@/components/organ/OrganChip";
 import { formatInt } from "@/lib/format";
+import { getCorpusStats, getOrgans } from "@/lib/queries";
+import {
+  organFromPage,
+  type PageSearchParams,
+} from "@/lib/organ";
 import {
   SEROTYPE_LOCI,
   SEROTYPE_LOCUS_LABELS,
@@ -24,6 +30,10 @@ import {
  * ici, cote serveur.
  *
  * Les ancres `#locus-<X>` sont la cible du fil d'Ariane des fiches serotype.
+ *
+ * ORGANE. `?organe=foie` recalcule les effectifs d'articles de chaque carte sur
+ * la strate ; le navigateur filtre par defaut sur les specificites citees dans
+ * l'organe et sait trier par nombre d'articles (« tri par organe »).
  */
 export const metadata: Metadata = {
   title: "Sérotypes HLA — index du corpus",
@@ -33,9 +43,16 @@ export const metadata: Metadata = {
     "associations cliniques.",
 };
 
-export default function SerotypeIndexPage() {
-  const catalog = getSerotypeCatalog();
+export default async function SerotypeIndexPage({
+  searchParams,
+}: {
+  searchParams?: PageSearchParams;
+} = {}) {
+  const organ = await organFromPage(searchParams);
+  const catalog = getSerotypeCatalog(organ);
   const direct = getSerotypeDirectAlleles();
+  const organs = getOrgans();
+  const stratum = organs.find((o) => o.key === organ);
 
   const sections: SerotypeLocusSection[] = SEROTYPE_LOCI.map((locus) => ({
     locus,
@@ -69,6 +86,16 @@ export default function SerotypeIndexPage() {
         title="Sérotypes HLA"
         description="Les spécificités sérologiques (A2, B27, DR15, DQ2, Cw7…) et les allèles qui les portent. Un sérotype ouvre la liste de ses allèles, à 2 et à 4 chiffres, chacun avec sa fiche."
       />
+
+      <OrganStrip
+        baseHref="/serotype"
+        selected={organ}
+        counts={Object.fromEntries(organs.map((o) => [o.key, o.nArticles]))}
+        allCount={getCorpusStats().nArticles}
+        stratum={{ nArticles: stratum?.nArticles, nTotal: getCorpusStats().nArticles }}
+        hint="Effectifs : articles de chaque organe. Choisir un organe recalcule les effectifs des cartes sur ses articles."
+      />
+
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile label="Loci" value={sections.length} hint="A, B, C, DR, DQ, DP" />
@@ -109,7 +136,7 @@ export default function SerotypeIndexPage() {
         </p>
       </Callout>
 
-      <SerotypeBrowser sections={sections} />
+      <SerotypeBrowser key={organ} sections={sections} organ={organ} />
     </div>
   );
 }

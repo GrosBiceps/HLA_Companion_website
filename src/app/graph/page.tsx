@@ -2,7 +2,19 @@ import Link from "next/link";
 import { Callout, LinkButton, PageHeader } from "@/components/ui";
 import GraphExplorerClient from "@/components/GraphExplorerClient";
 import type { Metadata } from "next";
-import { getDefaultGraphCenter, getNeighborhood } from "@/lib/queries";
+import { OrganStrip } from "@/components/organ/OrganChip";
+import {
+  getCorpusStats,
+  getDefaultGraphCenter,
+  getNeighborhood,
+  getOrgans,
+} from "@/lib/queries";
+import {
+  ALL_ORGANS,
+  organFromSearchParams,
+  organShortLabel,
+  withOrgan,
+} from "@/lib/organ";
 import { SIGNAL_LEVELS } from "@/lib/labels";
 import type { SignalLevel } from "@/lib/types";
 
@@ -27,6 +39,11 @@ import type { SignalLevel } from "@/lib/types";
  * ENCODAGE. `searchParams` livre des valeurs DEJA decodees : "HLA-DQB1*02:01"
  * arrive tel quel meme s'il a voyage en `HLA-DQB1%2A02%3A01`. On ne redecode
  * pas. Le retour est encode par `URLSearchParams` dans le composant client.
+ *
+ * ORGANE. `?organe=coeur` calcule le voisinage dans la STRATE de l'organe :
+ * aretes, niveaux de signal et effectifs sont ceux de l'organe (leur propre
+ * denominateur). Le centre par defaut est celui de la strate. Les liens du
+ * graphe (recentrage, fiches) reportent l'organe.
  */
 
 export const metadata: Metadata = {
@@ -42,18 +59,24 @@ type SearchParams = {
     center?: string;
     depth?: string;
     minSignal?: string;
+    organe?: string;
   }>;
 };
 
 export default async function GraphPage({ searchParams }: SearchParams) {
   const sp = await searchParams;
+  const organ = organFromSearchParams(sp);
+  const organs = getOrgans();
+  const stratum = organs.find((o) => o.key === organ);
 
   const requested = sp.center?.trim();
-  const fallback = getDefaultGraphCenter();
+  const fallback = getDefaultGraphCenter(organ);
   // Un `?center=` inconnu ne doit pas rendre une page blanche : on retombe
   // sur le centre par defaut et on le dit.
   const resolved =
-    requested && getNeighborhood(requested, 0).center ? requested : fallback;
+    requested && getNeighborhood(requested, 0, undefined, organ).center
+      ? requested
+      : fallback;
 
   const rawDepth = Number.parseInt(sp.depth ?? "1", 10);
   const depth = Number.isFinite(rawDepth)
@@ -64,7 +87,12 @@ export default async function GraphPage({ searchParams }: SearchParams) {
     ? (sp.minSignal as SignalLevel)
     : undefined;
 
-  const centerNode = resolved ? getNeighborhood(resolved, 0).center : null;
+  const centerNode = resolved
+    ? getNeighborhood(resolved, 0, undefined, organ).center
+    : null;
+  const baseHref = resolved
+    ? `/graph?center=${encodeURIComponent(resolved)}&depth=${depth}${minSignal ? `&minSignal=${minSignal}` : ""}`
+    : "/graph";
 
   return (
     <div className="space-y-6">
@@ -81,20 +109,24 @@ export default async function GraphPage({ searchParams }: SearchParams) {
               >
                 {centerNode.label}
               </strong>
-              , à {depth} saut{depth > 1 ? "s" : ""}. Survolez un nœud pour
-              isoler ses voisins, cliquez pour le détail, double-cliquez pour
-              vous y recentrer.
+              , à {depth} saut{depth > 1 ? "s" : ""}
+              {organ === ALL_ORGANS
+                ? ""
+                : ` — strate ${organShortLabel(organ)}`}
+              . Survolez un nœud pour isoler ses voisins, cliquez pour le
+              détail, double-cliquez pour vous y recentrer.
             </>
           ) : undefined
         }
         actions={
           centerNode ? (
             <LinkButton
-              href={
+              href={withOrgan(
                 centerNode.type === "hla"
                   ? `/allele/${encodeURIComponent(centerNode.id)}`
-                  : `/complication/${encodeURIComponent(centerNode.id)}`
-              }
+                  : `/complication/${encodeURIComponent(centerNode.id)}`,
+                organ,
+              )}
               size="sm"
             >
               Fiche détaillée
@@ -102,6 +134,16 @@ export default async function GraphPage({ searchParams }: SearchParams) {
           ) : undefined
         }
       />
+
+      <OrganStrip
+        baseHref={baseHref}
+        selected={organ}
+        counts={Object.fromEntries(organs.map((o) => [o.key, o.nArticles]))}
+        allCount={getCorpusStats().nArticles}
+        stratum={{ nArticles: stratum?.nArticles, nTotal: getCorpusStats().nArticles }}
+        hint="Le graphe est recalculé dans la strate de l'organe : liens, niveaux de signal et effectifs sont ceux de ses seuls articles."
+      />
+
 
       <Callout tone="framing" aria-label="Comment lire ce graphe" title="Comment lire ce graphe">
         <p>

@@ -8,6 +8,7 @@ import { AlleleName } from "@/components/ui/AlleleName";
 import { buttonClasses } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { coAnchor, plural } from "@/lib/format";
+import { ALL_ORGANS, type OrganSelection } from "@/lib/organ";
 import type { AssociationRow } from "@/lib/types";
 
 /**
@@ -30,9 +31,12 @@ import type { AssociationRow } from "@/lib/types";
 export function CompactAssociationList({
   rows,
   show,
+  organ = ALL_ORGANS,
 }: {
   rows: AssociationRow[];
   show: "outcome" | "hla";
+  /** Strate : reportee sur les liens, et bornant les phrases du tiroir. */
+  organ?: OrganSelection;
 }) {
   const [open, setOpen] = useState<AssociationRow | null>(null);
 
@@ -57,7 +61,7 @@ export function CompactAssociationList({
                 {show === "outcome" ? (
                   row.label
                 ) : (
-                  <AlleleName hla={row.hla} href className="text-sm" />
+                  <AlleleName hla={row.hla} href organ={organ} className="text-sm" />
                 )}
               </span>
               <span className="tabular shrink-0 text-xs text-fg-subtle">
@@ -93,6 +97,7 @@ export function CompactAssociationList({
           hla={open.hla}
           outcome={open.outcome}
           label={open.label}
+          organ={organ}
           onClose={() => setOpen(null)}
         />
       ) : null}

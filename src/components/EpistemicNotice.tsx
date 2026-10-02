@@ -95,6 +95,9 @@ export function EpistemicNotice({
         <div className="flex flex-col gap-4 border-t border-line bg-surface-muted/70 px-5 py-5 sm:px-6 md:border-l md:border-t-0 md:py-6">
           <div>
             <p className="eyebrow">Métriques d&apos;extraction</p>
+            <p className="mt-1 text-2xs font-medium leading-snug text-fg-muted">
+              Mesurées sur le {EXTRACTION_METRICS.scopeLabel} uniquement.
+            </p>
             <ul className="mt-3 space-y-3">
               <li className="flex items-baseline justify-between gap-3 border-b border-line pb-3">
                 <span className="text-sm text-fg-muted">Précision mesurée : </span>
@@ -134,6 +137,11 @@ export function EpistemicNotice({
                 optionnelle.
               </p>
             </div>
+            <p className="mt-3 text-2xs leading-snug text-fg-subtle">
+              Pour les autres organes (foie, cœur, poumon, GCSH, pancréas,
+              intestin), ce sont des valeurs de remplissage synthétiques : la
+              qualité d&apos;extraction n&apos;y est pas encore mesurée.
+            </p>
             {stale ? (
               <p
                 role="alert"

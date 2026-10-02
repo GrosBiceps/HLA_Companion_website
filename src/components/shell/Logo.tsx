@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { ALL_ORGANS, withOrgan, type OrganSelection } from "@/lib/organ";
 
 /**
  * Marque du site. Le pictogramme reprend la grammaire du graphe : un CERCLE
@@ -30,10 +33,10 @@ export function LogoMark({ className = "h-7 w-7" }: { className?: string }) {
   );
 }
 
-export function Logo() {
+export function Logo({ organ = ALL_ORGANS }: { organ?: OrganSelection }) {
   return (
     <Link
-      href="/"
+      href={withOrgan("/", organ)}
       className="group flex items-center gap-2.5 rounded-lg"
       aria-label="Compagnon bibliométrique HLA — accueil"
     >
@@ -42,8 +45,8 @@ export function Logo() {
         <span className="whitespace-nowrap font-serif text-[1.05rem] font-semibold tracking-tight text-fg">
           Compagnon HLA
         </span>
-        <span className="mt-1 hidden whitespace-nowrap text-2xs font-medium uppercase tracking-[0.14em] text-fg-subtle sm:block lg:hidden xl:block">
-          Bibliométrie · Greffe rénale
+        <span className="mt-1 hidden whitespace-nowrap text-2xs font-medium uppercase tracking-[0.14em] text-fg-subtle sm:block lg:hidden 2xl:block">
+          Bibliométrie · Transplantation
         </span>
       </span>
     </Link>

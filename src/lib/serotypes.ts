@@ -10,8 +10,15 @@
  */
 
 import { getDb } from "./db";
+import {
+  ALL_ORGANS,
+  ORGAN_KEYS,
+  type OrganKey,
+  type OrganSelection,
+} from "./organ";
 import type {
   AlleleSerotype,
+  OrganCount,
   Serotype,
   SerotypeCatalogEntry,
   SerotypeKind,
@@ -92,8 +99,11 @@ export function getSerotypeChildren(serotypeId: string): Serotype[] {
  * alleles lies, articles distincts. Trois requetes, jointes en memoire
  * (~130 lignes).
  */
-export function getSerotypeCatalog(): SerotypeCatalogEntry[] {
+export function getSerotypeCatalog(
+  organ: OrganSelection = ALL_ORGANS,
+): SerotypeCatalogEntry[] {
   const db = getDb();
+  const byOrgan = organ !== ALL_ORGANS;
   const rows = db
     .prepare(`SELECT ${SEROTYPE_COLUMNS} FROM serotypes s`)
     .all() as SerotypeRow[];
@@ -111,6 +121,9 @@ export function getSerotypeCatalog(): SerotypeCatalogEntry[] {
         .all() as { id: string; n_groups: number; n_alleles: number }[]
     ).map((r) => [r.id, r]),
   );
+  // Articles distincts de la strate qui mentionnent au moins un allele du
+  // serotype (un article n'est compte qu'une fois, meme s'il cite plusieurs
+  // alleles).
   const articles = new Map(
     (
       db
@@ -118,9 +131,14 @@ export function getSerotypeCatalog(): SerotypeCatalogEntry[] {
           `SELECT sa.serotype_id AS id, COUNT(DISTINCT hm.pmid) AS n
              FROM serotype_alleles sa
              JOIN hla_mentions hm ON hm.hla = sa.hla
+             ${
+               byOrgan
+                 ? "JOIN article_organs ao ON ao.pmid = hm.pmid AND ao.organ = ?"
+                 : ""
+             }
             GROUP BY sa.serotype_id`,
         )
-        .all() as { id: string; n: number }[]
+        .all(...(byOrgan ? [organ] : [])) as { id: string; n: number }[]
     ).map((r) => [r.id, r.n]),
   );
   return rows
@@ -137,25 +155,45 @@ export function getSerotypeCatalog(): SerotypeCatalogEntry[] {
     );
 }
 
+/** Articles distincts de chaque organe mentionnant un allele du serotype. */
+export function getSerotypeOrganCounts(serotypeId: string): OrganCount[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT ao.organ AS organ, COUNT(DISTINCT hm.pmid) AS n
+         FROM serotype_alleles sa
+         JOIN hla_mentions hm ON hm.hla = sa.hla
+         JOIN article_organs ao ON ao.pmid = hm.pmid
+        WHERE sa.serotype_id = ?
+        GROUP BY ao.organ`,
+    )
+    .all(serotypeId) as { organ: OrganKey; n: number }[];
+  const by = new Map(rows.map((r) => [r.organ, r.n]));
+  return ORGAN_KEYS.map((organ) => ({ organ, nArticles: by.get(organ) ?? 0 }));
+}
+
 /**
  * Alleles d'un serotype (groupes 2-digit ET alleles 4-digit), avec leurs
  * effectifs. Tri : groupes d'abord, puis nomenclature naturelle.
  */
-export function getSerotypeMembers(serotypeId: string): SerotypeMember[] {
+export function getSerotypeMembers(
+  serotypeId: string,
+  organ: OrganSelection = ALL_ORGANS,
+): SerotypeMember[] {
   const rows = getDb()
     .prepare(
       `SELECT sa.hla, h.resolution, h.parent_hla, sa.via,
-              (SELECT COUNT(DISTINCT hm.pmid) FROM hla_mentions hm
-                WHERE hm.hla = sa.hla) AS n_articles,
+              COALESCE((SELECT c.n_articles FROM hla_organ_counts c
+                         WHERE c.organ = ? AND c.hla = sa.hla), 0) AS n_articles,
               (SELECT COUNT(*) FROM associations a
-                WHERE a.hla = sa.hla) AS n_outcomes,
+                WHERE a.organ = ? AND a.hla = sa.hla) AS n_outcomes,
               (SELECT COUNT(*) FROM associations a
-                WHERE a.hla = sa.hla AND a.signal_level <> 'weak') AS n_marked
+                WHERE a.organ = ? AND a.hla = sa.hla
+                  AND a.signal_level <> 'weak') AS n_marked
          FROM serotype_alleles sa
          JOIN hla_entities h ON h.hla = sa.hla
         WHERE sa.serotype_id = ?`,
     )
-    .all(serotypeId) as {
+    .all(organ, organ, organ, serotypeId) as {
     hla: string;
     resolution: string;
     parent_hla: string | null;
@@ -250,8 +288,12 @@ const LEVEL_RANK: Record<SignalLevel, number> = {
  * serotype : ce sont des effectifs, et le niveau de signal le plus marque
  * parmi les alleles membres (qualitatif).
  */
-export function getSerotypeOutcomes(serotypeId: string): SerotypeOutcome[] {
+export function getSerotypeOutcomes(
+  serotypeId: string,
+  organ: OrganSelection = ALL_ORGANS,
+): SerotypeOutcome[] {
   const db = getDb();
+  const byOrgan = organ !== ALL_ORGANS;
   const rows = db
     .prepare(
       `SELECT o.outcome, o.label, o.category,
@@ -259,12 +301,17 @@ export function getSerotypeOutcomes(serotypeId: string): SerotypeOutcome[] {
               COUNT(DISTINCT pm.hla) AS n_alleles
          FROM pair_mentions pm
          JOIN outcomes o ON o.outcome = pm.outcome
+         ${
+           byOrgan
+             ? "JOIN article_organs ao ON ao.pmid = pm.pmid AND ao.organ = ?"
+             : ""
+         }
         WHERE pm.hla IN
               (SELECT hla FROM serotype_alleles WHERE serotype_id = ?)
         GROUP BY o.outcome
         ORDER BY n_articles DESC, o.label ASC`,
     )
-    .all(serotypeId) as {
+    .all(...(byOrgan ? [organ] : []), serotypeId) as {
     outcome: string;
     label: string;
     category: string;
@@ -275,10 +322,10 @@ export function getSerotypeOutcomes(serotypeId: string): SerotypeOutcome[] {
     .prepare(
       `SELECT a.outcome, a.signal_level
          FROM associations a
-        WHERE a.hla IN
+        WHERE a.organ = ? AND a.hla IN
               (SELECT hla FROM serotype_alleles WHERE serotype_id = ?)`,
     )
-    .all(serotypeId) as { outcome: string; signal_level: SignalLevel }[];
+    .all(organ, serotypeId) as { outcome: string; signal_level: SignalLevel }[];
   const top = new Map<string, SignalLevel>();
   for (const l of levels) {
     const cur = top.get(l.outcome);

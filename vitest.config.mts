@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
@@ -8,6 +8,8 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
+    // Copies de travail des agents (git worktrees) : hors perimetre.
+    exclude: [...configDefaults.exclude, ".claude/**"],
     // better-sqlite3 est un module natif : il doit rester hors de la
     // transformation Vite et tourner dans le contexte Node.
     server: { deps: { external: ["better-sqlite3"] } },

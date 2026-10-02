@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import type { CategoryOverview, LocusOverview } from "@/lib/queries";
 import { categoryClasses, categoryDisplay, hlaClassColor } from "@/lib/theme";
 import type { Author } from "@/lib/types";
-import { NUMBER_FORMAT, plural } from "./constellation";
+import { NUMBER_FORMAT, plural } from "@/components/landing/constellation";
 
 function PanelHeader({
   icon,
@@ -251,7 +251,7 @@ function Doors() {
         <UserRound aria-hidden="true" className="h-4 w-4 shrink-0 text-fg-subtle" />
         <span>
           Vous cherchez un auteur ? Tapez son nom dans la{" "}
-          <a href="#recherche" className="link">
+          <a href="/#recherche" className="link">
             recherche
           </a>
           .

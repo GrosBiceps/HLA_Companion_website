@@ -14,7 +14,7 @@ import { cn } from "@/lib/cn";
 import type { CorpusStats } from "@/lib/queries";
 import { SIGNAL_CLASSES } from "@/lib/theme";
 import type { PublicationsPerYear, SignalLevel } from "@/lib/types";
-import { NUMBER_FORMAT, formatPct } from "./constellation";
+import { NUMBER_FORMAT, formatPct } from "@/components/landing/constellation";
 import { PublicationsChart } from "./PublicationsChart";
 
 /** Ordre de lecture de la repartition : du plus marque au non distinguable. */

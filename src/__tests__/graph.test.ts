@@ -309,16 +309,21 @@ import fs from "node:fs";
 import path from "node:path";
 
 describe("routage de l'explorateur de graphe", () => {
-  it("les liens statiques de l'accueil menent a une page existante", () => {
+  it("les liens statiques de l'accueil et de la presentation menent a une page existante", () => {
     // Les liens de l'accueil vivent dans la page ET dans ses composants
     // (portes d'entree, bandeau d'ouverture) : on lit l'ensemble.
-    const landingDir = path.join(process.cwd(), "src", "components", "landing");
+    const dirs = ["landing", "presentation"].map((d) =>
+      path.join(process.cwd(), "src", "components", d),
+    );
     const source = [
       path.join(process.cwd(), "src", "app", "page.tsx"),
-      ...fs
-        .readdirSync(landingDir)
-        .filter((f) => f.endsWith(".tsx"))
-        .map((f) => path.join(landingDir, f)),
+      path.join(process.cwd(), "src", "app", "presentation", "page.tsx"),
+      ...dirs.flatMap((dir) =>
+        fs
+          .readdirSync(dir)
+          .filter((f) => f.endsWith(".tsx"))
+          .map((f) => path.join(dir, f)),
+      ),
     ]
       .map((f) => fs.readFileSync(f, "utf-8"))
       .join("\n");

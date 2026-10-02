@@ -9,7 +9,7 @@ import {
   Sigma,
 } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
-import { NUMBER_FORMAT } from "./constellation";
+import { NUMBER_FORMAT } from "@/components/landing/constellation";
 
 const PIPELINE = [
   {

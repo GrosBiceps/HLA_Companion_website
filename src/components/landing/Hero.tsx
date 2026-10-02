@@ -23,7 +23,7 @@ const CHIP =
  * ORDRE DE LECTURE. Le cadrage epistemique precede la recherche : le chapo
  * dit « co-occurrences textuelles », puis une ligne de cadrage dit ce que ce
  * n'est PAS et donne le taux d'erreur, AVANT le champ de recherche. L'encart
- * complet (`EpistemicNotice`) suit immediatement le bandeau. C'est la
+ * complet (`EpistemicNotice`) vit sur /presentation (lien « Lire le cadrage »). C'est la
  * garantie historique de l'accueil (l'encart etait place avant la recherche
  * pour qu'on ne rejoigne pas une fiche sans avoir lu une ligne du cadrage) :
  * elle est conservee sous une forme compacte, dans le champ de vision du
@@ -63,7 +63,7 @@ export function Hero({
           id="accueil-titre"
           className="font-serif text-[2.125rem] font-semibold leading-[1.08] tracking-tight text-fg sm:text-5xl lg:text-[2.45rem]"
         >
-          Allèles HLA et complications de la greffe rénale,{" "}
+          Allèles HLA et complications de la greffe,{" "}
           <span className="text-primary">tels que la littérature les cite ensemble.</span>
         </h1>
 
@@ -74,8 +74,9 @@ export function Hero({
           <span className="tabular font-medium text-fg">
             {NUMBER_FORMAT.format(nArticles)}
           </span>{" "}
-          articles indexés par PubMed{span ? ` (${span})` : ""}, et ramène chaque
-          chiffre aux phrases sources qui le produisent.
+          articles indexés par PubMed{span ? ` (${span})` : ""}, tous organes
+          confondus, et ramène chaque chiffre aux phrases sources qui le
+          produisent.
         </p>
 
         <p className="flex max-w-[40rem] items-start gap-2.5 rounded-lg border border-primary/20 bg-primary-soft/60 px-3.5 py-2.5 text-sm leading-snug text-fg">
@@ -87,9 +88,9 @@ export function Hero({
             <span className="text-fg-muted">
               Extraction automatique : {EXTRACTION_METRICS.errorRatePhrase}.
             </span>{" "}
-            <a href="#cadrage" className="link whitespace-nowrap">
+            <Link href="/presentation#cadrage" className="link whitespace-nowrap">
               Lire le cadrage
-            </a>
+            </Link>
           </span>
         </p>
 

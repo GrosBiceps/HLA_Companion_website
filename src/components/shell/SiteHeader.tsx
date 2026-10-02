@@ -18,7 +18,7 @@ export function SiteHeader() {
           <NavLinks />
         </div>
         <div className="ml-auto flex items-center gap-1.5">
-          <SearchCommand triggerClassName="w-48 xl:w-60" />
+          <SearchCommand triggerClassName="w-48 2xl:w-60" />
           <MobileNav />
         </div>
       </div>

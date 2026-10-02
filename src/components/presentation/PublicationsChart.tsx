@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 import type { PublicationsPerYear } from "@/lib/types";
-import { NUMBER_FORMAT, niceTicks, plural } from "./constellation";
+import { NUMBER_FORMAT, niceTicks, plural } from "@/components/landing/constellation";
 
 /**
  * Histogramme des publications par annee — HTML/CSS pur (Server Component).

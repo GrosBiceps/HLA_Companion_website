@@ -164,10 +164,18 @@ Ordre vertical, sur toutes les routes :
   contenu « comment lire le site » : cartes « Que voulez-vous faire ? »
   (`components/guide/TaskCards.tsx`), parcours en trois étapes et légende des
   niveaux (`components/guide/ReadingGuide.tsx`, exportés `ReadingSteps` /
-  `SignalLegend`), syntaxe de recherche, FAQ, glossaire. L'accueil n'en garde
-  qu'un bandeau de trois gestes (`landing/QuickSteps.tsx`) et le rappel
-  « Première visite ? » (`landing/FirstVisitHint.tsx`, client, `localStorage`
-  protégé par try/catch, carte flottante sans décalage de mise en page).
+  `SignalLegend`), syntaxe de recherche, FAQ, glossaire.
+- `/` (accueil) ne contient **que** le bandeau d'ouverture (`landing/Hero.tsx` :
+  chapo, ligne de cadrage, recherche, constellation) et un unique bouton
+  « En savoir plus » vers `/presentation`. Aucune autre section, aucune carte
+  flottante : le clinicien lance sa recherche en deux secondes. Texte neutre
+  vis-à-vis de l'organe.
+- `/presentation` (entrée « Présentation » de `nav.ts`, juste après « Accueil »)
+  reçoit tout le contenu retiré de l'accueil, avec sommaire collant :
+  `EpistemicNotice` complet (`#cadrage`), « Le corpus en chiffres » (`#corpus`),
+  « Les trois gestes » (`#gestes`, `presentation/QuickSteps.tsx`), signaux les
+  plus marqués (`#signaux`), « Par où commencer ? » (`#entrees`), contexte
+  scientifique (`#contexte`). Composants dans `components/presentation/`.
 - `/methode` est une **page provisoire** ; `/matrice` et `/carte-v1` sont
   livrées (voir [`VISUALISATIONS.md`](VISUALISATIONS.md)). `/methode` porte déjà l'`EpistemicNotice` :
   c'est la cible de tous les liens « Méthodologie » / « En savoir plus ».

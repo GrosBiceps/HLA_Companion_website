@@ -80,9 +80,14 @@ export default function GuidePage() {
         title="Guide d'utilisation"
         description="Dites ce que vous cherchez : chaque carte ci-dessous vous emmène directement au bon endroit. Le reste de la page explique comment lire ce que vous y trouverez."
         actions={
-          <LinkButton href="/#recherche" variant="primary" size="lg">
-            Lancer une recherche
-          </LinkButton>
+          <div className="flex flex-wrap gap-2">
+            <LinkButton href="/#recherche" variant="primary" size="lg">
+              Lancer une recherche
+            </LinkButton>
+            <LinkButton href="/presentation" variant="secondary" size="lg">
+              Présentation du site
+            </LinkButton>
+          </div>
         }
       />
 

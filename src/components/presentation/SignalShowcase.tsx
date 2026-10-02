@@ -5,7 +5,7 @@ import { AlleleName, CategoryBadge, cardClasses } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { SignalHighlight } from "@/lib/queries";
 import { SIGNAL_CLASSES } from "@/lib/theme";
-import { plural } from "./constellation";
+import { plural } from "@/components/landing/constellation";
 
 /**
  * « Signaux les plus marques » — vitrine de paires (allele, complication).

@@ -46,15 +46,15 @@ export const OUTCOME_LABELS: Record<string, OutcomeLabel> = {
     category: "Immunisation",
   },
   complement_activation: {
-    label: "Activation du complement",
+    label: "Activation du complément",
     category: "Immunisation",
   },
   HLA_mismatch_outcome: {
-    label: "Incompatibilite HLA",
+    label: "Incompatibilité HLA",
     category: "Immunisation",
   },
   DGF: {
-    label: "Reprise retardee de fonction (DGF)",
+    label: "Reprise retardée de fonction (DGF)",
     category: "Fonction du greffon",
   },
   graft_loss: { label: "Perte du greffon", category: "Fonction du greffon" },
@@ -63,29 +63,29 @@ export const OUTCOME_LABELS: Record<string, OutcomeLabel> = {
     category: "Fonction du greffon",
   },
   eGFR: {
-    label: "Fonction renale (DFG estime)",
+    label: "Fonction rénale (DFG estimé)",
     category: "Fonction du greffon",
   },
-  BK_nephropathy: { label: "Nephropathie a BK virus", category: "Infection" },
-  CMV: { label: "Infection a CMV", category: "Infection" },
+  BK_nephropathy: { label: "Néphropathie à BK virus", category: "Infection" },
+  CMV: { label: "Infection à CMV", category: "Infection" },
   PTLD: {
-    label: "Syndrome lymphoproliferatif (PTLD)",
+    label: "Syndrome lymphoprolifératif (PTLD)",
     category: "Neoplasie",
   },
-  skin_cancer: { label: "Cancer cutane", category: "Neoplasie" },
+  skin_cancer: { label: "Cancer cutané", category: "Neoplasie" },
   NODAT: {
-    label: "Diabete post-transplantation (NODAT)",
+    label: "Diabète post-transplantation (NODAT)",
     category: "Metabolique",
   },
   recurrent_GN: {
-    label: "Recidive de glomerulonephrite",
+    label: "Récidive de glomérulonéphrite",
     category: "Recidive",
   },
   FSGS: {
     label: "Hyalinose segmentaire et focale (HSF)",
     category: "Recidive",
   },
-  IgA_nephropathy: { label: "Nephropathie a IgA", category: "Recidive" },
+  IgA_nephropathy: { label: "Néphropathie à IgA", category: "Recidive" },
 };
 
 /** Ordre de tri pour l'affichage : le plus fort en premier. */

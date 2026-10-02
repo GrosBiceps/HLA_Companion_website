@@ -112,14 +112,12 @@ describe("page /guide (rendu)", () => {
     expect(faq).toMatch(/signal inverse/);
   });
 
-  it("les sérotypes sont signalés « à venir » et NON liés (TODO(serotypes))", () => {
+  it("les sérotypes sont expliqués et liés vers /serotype", () => {
     const { container, text } = renderPage();
-    expect(text).toMatch(/à venir selon disponibilité/);
+    expect(text).toMatch(/Sérotypes \(par exemple/);
+    expect(text).not.toMatch(/à venir selon disponibilité/);
     const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
-    // Tant que /serotype n'existe pas sur le disque, aucun lien ne doit y mener.
-    if (!fs.existsSync(path.join(APP_DIR, "serotype"))) {
-      expect(hrefs.some((h) => h?.startsWith("/serotype"))).toBe(false);
-    }
+    expect(hrefs).toContain("/serotype");
   });
 
   it("tous les liens internes menent a une route existante", () => {

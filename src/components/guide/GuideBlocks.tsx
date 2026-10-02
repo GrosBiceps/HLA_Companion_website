@@ -69,21 +69,23 @@ export function SearchSyntax() {
         propose, elle ne tranche pas : un allèle absent de la liste n&apos;a
         simplement pas été mentionné dans le corpus.
       </p>
-      <div className="rounded-xl border border-dashed border-line-strong bg-surface-muted px-4 py-3 text-sm leading-relaxed text-fg-muted">
+      <div className="rounded-xl border border-line bg-surface-muted px-4 py-3 text-sm leading-relaxed text-fg-muted">
         <p className="flex flex-wrap items-center gap-2 font-medium text-fg">
           <span>
-            Sérotypes (par exemple <span className="allele">DR15</span>)
+            Sérotypes (par exemple <span className="allele">DR15</span>,{" "}
+            <span className="allele">B27</span>, <span className="allele">DQ2</span>)
           </span>
-          <Badge size="xs" tone="outline">
-            à venir selon disponibilité
+          <Badge size="xs" tone="primary">
+            Recherche disponible
           </Badge>
         </p>
-        {/* TODO(serotypes): lorsque la route /serotype existe, remplacer ce
-            paragraphe par un lien vers /serotype et retirer le badge « à venir ». */}
         <p className="mt-1">
-          La recherche par sérotype (ancienne nomenclature sérologique) est en
-          cours d&apos;ajout. Tant qu&apos;elle n&apos;est pas disponible, cherchez
-          l&apos;allèle correspondant.
+          Tapez un sérotype (ancienne nomenclature sérologique) pour obtenir
+          la liste des allèles qu&apos;il regroupe, chacun avec son lien.{" "}
+          <Link href="/serotype" className="link">
+            Parcourir tous les sérotypes
+          </Link>
+          .
         </p>
       </div>
     </div>

@@ -18,7 +18,11 @@
  *  3. Cinq niveaux, tous couverts : un niveau manquant produirait un rendu
  *     vide la ou l'utilisateur attend une lecture.
  *
- * `inverse` a sa propre teinte (violet) plutot qu'une place sur l'echelle
+ * `tone` est une classe de TEXTE lisible (contraste AA) ; la couleur de
+ * l'echelle elle-meme (remplissages, traits) est dans `theme.ts`
+ * (`SIGNAL_COLORS`, `SIGNAL_CLASSES`).
+ *
+ * `inverse` a sa propre teinte (orange) plutot qu'une place sur l'echelle
  * bleue : ce n'est pas un signal plus faible que `weak`, c'est un signal
  * d'une AUTRE NATURE — une co-occurrence moins frequente qu'attendue. Le
  * confondre visuellement avec le bas de l'echelle le rendrait invisible.
@@ -43,9 +47,9 @@ export interface SignalDisplay {
  */
 export const SIGNAL_DISPLAY: Record<SignalLevel, SignalDisplay> &
   Record<string, SignalDisplay> = {
-  inverse: { dots: "◐", label: "Signal inverse", tone: "text-violet-700" },
-  strong: { dots: "●●●●", label: "Signal fort", tone: "text-sky-800" },
-  clear: { dots: "●●●○", label: "Signal net", tone: "text-sky-700" },
-  moderate: { dots: "●●○○", label: "Signal modéré", tone: "text-slate-600" },
-  weak: { dots: "○○○○", label: "Signal faible", tone: "text-slate-400" },
+  inverse: { dots: "◐", label: "Signal inverse", tone: "text-signal-inverse" },
+  strong: { dots: "●●●●", label: "Signal fort", tone: "text-signal-strong" },
+  clear: { dots: "●●●○", label: "Signal net", tone: "text-signal-clear" },
+  moderate: { dots: "●●○○", label: "Signal modéré", tone: "text-fg-muted" },
+  weak: { dots: "○○○○", label: "Signal faible", tone: "text-fg-subtle" },
 } satisfies Record<SignalLevel, SignalDisplay>;

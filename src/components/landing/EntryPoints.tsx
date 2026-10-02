@@ -1,11 +1,10 @@
 import Link from "next/link";
-import { ArrowRight, Dna, Sparkles, Stethoscope, UserRound } from "lucide-react";
-import { SignalIndicator } from "@/components/SignalIndicator";
-import { AlleleName, HlaClassBadge, LinkButton } from "@/components/ui";
+import { ArrowRight, Dna, Grid3x3, Network, Stethoscope, UserRound } from "lucide-react";
+import { AlleleName, HlaClassBadge, cardClasses } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import type { CategoryOverview, LocusOverview } from "@/lib/queries";
 import { categoryClasses, categoryDisplay, hlaClassColor } from "@/lib/theme";
-import type { AssociationRow, Author, HlaEntity } from "@/lib/types";
+import type { Author } from "@/lib/types";
 import { NUMBER_FORMAT, plural } from "./constellation";
 
 function PanelHeader({
@@ -147,76 +146,13 @@ function ByComplication({ categories }: { categories: CategoryOverview[] }) {
   );
 }
 
-/** Fiche vitrine : l'allele de demonstration et ses premieres paires. */
-function Showcase({
-  allele,
-  top,
-  total,
-}: {
-  allele: HlaEntity;
-  top: AssociationRow[];
-  total: number;
-}) {
-  const href = `/allele/${encodeURIComponent(allele.hla)}`;
-  return (
-    <div className="relative flex flex-col gap-4 overflow-hidden rounded-xl border border-primary/25 bg-primary-soft/50 p-4 shadow-card sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1.5">
-          <p className="eyebrow flex items-center gap-1.5 text-primary">
-            <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
-            Fiche vitrine
-          </p>
-          <p className="font-serif text-2xl font-semibold tracking-tight text-fg sm:text-[1.75rem]">
-            <AlleleName hla={allele.hla} />
-          </p>
-          <p className="text-sm text-fg-muted">
-            {plural(allele.nMentions, "mention")} · {plural(total, "complication co-mentionnée", "complications co-mentionnées")}
-          </p>
-        </div>
-        <HlaClassBadge hlaClass={allele.hlaClass} />
-      </div>
-      <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface">
-        {top.map((a) => (
-          <li
-            key={a.outcome}
-            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2.5"
-          >
-            <span className="flex min-w-0 items-center gap-2 text-sm text-fg">
-              <span
-                aria-hidden="true"
-                className={cn("h-2 w-2 shrink-0 rounded-full", categoryClasses(a.category).bg)}
-              />
-              <span className="truncate">{a.label}</span>
-            </span>
-            <span className="flex items-center gap-3">
-              <span className="tabular text-xs text-fg-subtle">
-                {plural(a.nCooccurrence, "article")}
-              </span>
-              <SignalIndicator level={a.signalLevel} />
-            </span>
-          </li>
-        ))}
-      </ul>
-      <div className="flex flex-wrap items-center gap-3">
-        <LinkButton href={href} variant="primary">
-          Ouvrir la fiche et ses phrases
-          <ArrowRight aria-hidden="true" className="h-4 w-4" />
-        </LinkButton>
-        <LinkButton href={`/graph?center=${encodeURIComponent(allele.hla)}`} variant="ghost">
-          Voir dans le graphe
-        </LinkButton>
-      </div>
-    </div>
-  );
-}
-
 /** Par auteur : les auteurs les plus publies du corpus. */
 function ByAuthor({ authors, synthetic }: { authors: Author[]; synthetic: boolean }) {
   const max = Math.max(1, ...authors.map((a) => a.nPublications));
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-line bg-surface p-4 shadow-card sm:p-5">
       <PanelHeader icon={<UserRound />} eyebrow="Par auteur" title="Les plus publiés du corpus" />
-      <ol className="space-y-2.5">
+      <ol className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
         {authors.map((a, i) => (
           <li key={a.authorId}>
             <Link
@@ -251,35 +187,103 @@ function ByAuthor({ authors, synthetic }: { authors: Author[]; synthetic: boolea
   );
 }
 
+const DOORS = [
+  {
+    href: "/allele",
+    icon: Dna,
+    title: "Allèle",
+    text: "Partir d'un allèle HLA et voir toutes ses complications co-mentionnées.",
+  },
+  {
+    href: "/complication",
+    icon: Stethoscope,
+    title: "Complication",
+    text: "Partir d'un événement clinique et voir les allèles cités avec lui.",
+  },
+  {
+    href: "/matrice",
+    icon: Grid3x3,
+    title: "Vue d'ensemble",
+    text: "La matrice allèles × complications, d'un seul regard.",
+  },
+  {
+    href: "/graph",
+    icon: Network,
+    title: "Réseau",
+    text: "Explorer de proche en proche, d'un nœud à ses voisins.",
+  },
+];
+
+/** « Par où commencer ? » : quatre grandes portes, plus l'astuce auteur. */
+function Doors() {
+  return (
+    <div className="space-y-3">
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {DOORS.map(({ href, icon: Icon, title, text }) => (
+          <li key={href} className="flex">
+            <Link
+              href={href}
+              className={cn(
+                cardClasses({ interactive: true, padding: "lg" }),
+                "group flex w-full flex-col gap-3",
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-soft text-primary"
+              >
+                <Icon className="h-5 w-5" />
+              </span>
+              <span className="font-serif text-xl font-semibold text-fg">{title}</span>
+              <span className="text-sm leading-relaxed text-fg-muted">{text}</span>
+              <span className="mt-auto inline-flex items-center gap-1.5 pt-1 text-sm font-medium text-primary">
+                Ouvrir
+                <ArrowRight
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
+                />
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      <p className="flex items-center gap-2 text-sm text-fg-muted">
+        <UserRound aria-hidden="true" className="h-4 w-4 shrink-0 text-fg-subtle" />
+        <span>
+          Vous cherchez un auteur ? Tapez son nom dans la{" "}
+          <a href="#recherche" className="link">
+            recherche
+          </a>
+          .
+        </span>
+      </p>
+    </div>
+  );
+}
+
 /**
- * Points d'entree : par allele (loci groupes par classe), par complication
- * (7 categories), fiche vitrine, par auteur.
+ * Points d'entree : les quatre portes, puis par allele (loci groupes par
+ * classe), par complication (7 categories) et par auteur.
  */
 export function EntryPoints({
   loci,
   categories,
   authors,
-  showcase,
   synthetic,
 }: {
   loci: LocusOverview[];
   categories: CategoryOverview[];
   authors: Author[];
-  showcase: { allele: HlaEntity; top: AssociationRow[]; total: number } | null;
   synthetic: boolean;
 }) {
   return (
-    <div className="space-y-5">
+    <div className="space-y-8">
+      <Doors />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <ByAllele loci={loci} />
         <ByComplication categories={categories} />
       </div>
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        {showcase ? (
-          <Showcase allele={showcase.allele} top={showcase.top} total={showcase.total} />
-        ) : null}
-        <ByAuthor authors={authors} synthetic={synthetic} />
-      </div>
+      <ByAuthor authors={authors} synthetic={synthetic} />
     </div>
   );
 }

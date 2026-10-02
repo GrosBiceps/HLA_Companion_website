@@ -160,6 +160,14 @@ Ordre vertical, sur toutes les routes :
   « / » ou Ctrl/⌘-K, flèches + Entrée. **Un seul `SearchCommand` par page**
   (il écoute les raccourcis). La palette rappelle le cadrage en pied.
 - Mobile (< `lg`) : menu hamburger (`MobileNav`), recherche en bouton-icône.
+- `/guide` (« Guide d'utilisation », entrée « Guide » de `nav.ts`) porte tout le
+  contenu « comment lire le site » : cartes « Que voulez-vous faire ? »
+  (`components/guide/TaskCards.tsx`), parcours en trois étapes et légende des
+  niveaux (`components/guide/ReadingGuide.tsx`, exportés `ReadingSteps` /
+  `SignalLegend`), syntaxe de recherche, FAQ, glossaire. L'accueil n'en garde
+  qu'un bandeau de trois gestes (`landing/QuickSteps.tsx`) et le rappel
+  « Première visite ? » (`landing/FirstVisitHint.tsx`, client, `localStorage`
+  protégé par try/catch, carte flottante sans décalage de mise en page).
 - `/methode` est une **page provisoire** ; `/matrice` et `/carte-v1` sont
   livrées (voir [`VISUALISATIONS.md`](VISUALISATIONS.md)). `/methode` porte déjà l'`EpistemicNotice` :
   c'est la cible de tous les liens « Méthodologie » / « En savoir plus ».

@@ -138,16 +138,57 @@ describe("page d'accueil (rendu)", () => {
     expect(before).toBe(true);
   });
 
-  it("rend les cinq sections et les points d'entree principaux", () => {
+  it("rend les sections de l'accueil et les points d'entree principaux", () => {
     const { container } = renderPage();
-    for (const id of ["corpus", "lire", "signaux", "entrees", "contexte"]) {
+    for (const id of ["recherche", "corpus", "signaux", "entrees", "contexte"]) {
       expect(container.querySelector(`#${id}`), id).not.toBeNull();
     }
     const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
-    for (const h of ["/graph", "/matrice", "/methode", "/carte-v1"]) {
+    for (const h of [
+      "/graph",
+      "/matrice",
+      "/allele",
+      "/complication",
+      "/methode",
+      "/carte-v1",
+      "/guide",
+    ]) {
       expect(hrefs).toContain(h);
     }
+    // Exemples cliquables sous le champ de recherche : allele, complication, auteur.
     expect(hrefs).toContain(`/allele/${encodeURIComponent("HLA-DQB1*02:01")}`);
+    expect(hrefs.some((h) => h?.startsWith("/complication/"))).toBe(true);
+    expect(hrefs.some((h) => h?.startsWith("/auteur/"))).toBe(true);
+  });
+
+  it("l'explication longue est dans /guide : l'accueil n'en garde qu'un bandeau compact", () => {
+    const { container, text } = renderPage();
+    // Plus de section « Comment lire le site » ni de legende detaillee.
+    expect(container.querySelector("#lire")).toBeNull();
+    expect(text).not.toMatch(/De l.allèle aux phrases sources, en deux clics/);
+    expect(container.querySelector("dl")).toBeNull();
+    // Bandeau 1-2-3 et bouton vers le guide complet.
+    const steps = container.querySelector("#demarche-titre")?.closest("section");
+    expect(steps).not.toBeNull();
+    expect(steps!.querySelectorAll("ol > li")).toHaveLength(3);
+    const guide = [...steps!.querySelectorAll("a")].find(
+      (a) => a.getAttribute("href") === "/guide",
+    );
+    expect(guide?.textContent).toMatch(/Ouvrir le guide complet/);
+    // Legende compacte : les cinq niveaux restent nommes.
+    for (const label of ["fort", "net", "modéré", "faible", "inverse"]) {
+      expect(steps!.textContent).toContain(`Signal ${label}`);
+    }
+  });
+
+  it("propose les quatre portes « Par où commencer ? »", () => {
+    const { container } = renderPage();
+    const entrees = container.querySelector("#entrees")!;
+    expect(entrees.textContent).toMatch(/Par où commencer/);
+    const hrefs = [...entrees.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    for (const h of ["/allele", "/complication", "/matrice", "/graph"]) {
+      expect(hrefs).toContain(h);
+    }
   });
 
   it("n'affiche aucune metrique brute d'association", () => {

@@ -1,0 +1,132 @@
+serotype_id,locus,label,broad_serotype,kind,alleles,note
+A1,A,A1,,specific,A*01,
+A2,A,A2,,specific,A*02,
+A3,A,A3,,specific,A*03,
+A9,A,A9,,broad,,Famille large : A23 et A24.
+A23,A,A23,A9,specific,A*23,
+A24,A,A24,A9,specific,A*24,
+A10,A,A10,,broad,,"Famille large : A25, A26, A34 et A66."
+A25,A,A25,A10,specific,A*25,
+A26,A,A26,A10,specific,A*26,
+A34,A,A34,A10,specific,A*34,
+A66,A,A66,A10,specific,A*66,
+A11,A,A11,,specific,A*11,
+A19,A,A19,,broad,,"Famille large : A29, A30, A31, A32, A33 et A74."
+A29,A,A29,A19,specific,A*29,
+A30,A,A30,A19,specific,A*30,
+A31,A,A31,A19,specific,A*31,
+A32,A,A32,A19,specific,A*32,
+A33,A,A33,A19,specific,A*33,
+A74,A,A74,A19,specific,A*74,
+A28,A,A28,,broad,,Famille large : A68 et A69.
+A68,A,A68,A28,specific,A*68,
+A69,A,A69,A28,specific,A*69,
+A36,A,A36,,specific,A*36,
+A43,A,A43,,specific,A*43,
+A80,A,A80,,specific,A*80,
+B7,B,B7,,specific,B*07,
+B8,B,B8,,specific,B*08,
+B13,B,B13,,specific,B*13,
+B14,B,B14,,broad,B*14,Famille large : B64 et B65.
+B64,B,B64,B14,specific,B*14:01,
+B65,B,B65,B14,specific,B*14:02,
+B15,B,B15,,broad,B*15,"Famille large : B62, B63, B71, B72, B75, B76, B77 (et B70)."
+B62,B,B62,B15,specific,B*15:01;B*15:04;B*15:06;B*15:07;B*15:11;B*15:25;B*15:27,
+B63,B,B63,B15,specific,B*15:16;B*15:17,
+B70,B,B70,B15,specific,B*15:09,
+B71,B,B71,B15,specific,B*15:10;B*15:18,
+B72,B,B72,B15,specific,B*15:03,
+B75,B,B75,B15,specific,B*15:02;B*15:08,
+B76,B,B76,B15,specific,B*15:12,
+B77,B,B77,B15,specific,B*15:13,
+B18,B,B18,,specific,B*18,
+B27,B,B27,,specific,B*27,
+B35,B,B35,,specific,B*35,
+B37,B,B37,,specific,B*37,
+B16,B,B16,,broad,,Famille large : B38 et B39.
+B38,B,B38,B16,specific,B*38,
+B39,B,B39,B16,specific,B*39,
+B40,B,B40,,broad,B*40,Famille large : B60 et B61.
+B60,B,B60,B40,specific,B*40:01,
+B61,B,B61,B40,specific,B*40:02;B*40:06,
+B41,B,B41,,specific,B*41,
+B42,B,B42,,specific,B*42,
+B12,B,B12,,broad,,Famille large : B44 et B45.
+B44,B,B44,B12,specific,B*44,
+B45,B,B45,B12,specific,B*45,
+B46,B,B46,,specific,B*46,
+B47,B,B47,,specific,B*47,
+B48,B,B48,,specific,B*48,
+B21,B,B21,,broad,,Famille large : B49 et B50.
+B49,B,B49,B21,specific,B*49,
+B50,B,B50,B21,specific,B*50,
+B5,B,B5,,broad,,Famille large : B51 et B52.
+B51,B,B51,B5,specific,B*51,
+B52,B,B52,B5,specific,B*52,
+B53,B,B53,,specific,B*53,
+B22,B,B22,,broad,,"Famille large : B54, B55 et B56."
+B54,B,B54,B22,specific,B*54,
+B55,B,B55,B22,specific,B*55,
+B56,B,B56,B22,specific,B*56,
+B17,B,B17,,broad,,Famille large : B57 et B58.
+B57,B,B57,B17,specific,B*57,
+B58,B,B58,B17,specific,B*58,
+B59,B,B59,,specific,B*59,
+B67,B,B67,,specific,B*67,
+B73,B,B73,,specific,B*73,
+B78,B,B78,,specific,B*78,
+B81,B,B81,,specific,B*81,
+B82,B,B82,,specific,B*82,
+B83,B,B83,,specific,B*83,
+Cw1,C,Cw1,,specific,C*01,
+Cw2,C,Cw2,,specific,C*02,
+Cw4,C,Cw4,,specific,C*04,
+Cw5,C,Cw5,,specific,C*05,
+Cw6,C,Cw6,,specific,C*06,
+Cw7,C,Cw7,,specific,C*07,
+Cw8,C,Cw8,,specific,C*08,
+Cw12,C,Cw12,,specific,C*12,
+Cw14,C,Cw14,,specific,C*14,
+Cw15,C,Cw15,,specific,C*15,
+Cw16,C,Cw16,,specific,C*16,
+Cw17,C,Cw17,,specific,C*17,
+Cw18,C,Cw18,,specific,C*18,
+Cw3,C,Cw3,,broad,C*03,Famille large : Cw9 et Cw10.
+Cw9,C,Cw9,Cw3,specific,C*03:03,
+Cw10,C,Cw10,Cw3,specific,C*03:02;C*03:04,
+DR1,DR,DR1,,specific,DRB1*01,
+DR2,DR,DR2,,broad,,Famille large : DR15 et DR16.
+DR15,DR,DR15,DR2,specific,DRB1*15,
+DR16,DR,DR16,DR2,specific,DRB1*16,
+DR3,DR,DR3,,broad,DRB1*03,Famille large : DR17 et DR18.
+DR17,DR,DR17,DR3,specific,DRB1*03:01;DRB1*03:04;DRB1*03:05;DRB1*03:07,
+DR18,DR,DR18,DR3,specific,DRB1*03:02;DRB1*03:03,
+DR4,DR,DR4,,specific,DRB1*04,
+DR5,DR,DR5,,broad,,Famille large : DR11 et DR12.
+DR11,DR,DR11,DR5,specific,DRB1*11,
+DR12,DR,DR12,DR5,specific,DRB1*12,
+DR6,DR,DR6,,broad,,Famille large : DR13 et DR14.
+DR13,DR,DR13,DR6,specific,DRB1*13,
+DR14,DR,DR14,DR6,specific,DRB1*14,
+DR7,DR,DR7,,specific,DRB1*07,
+DR8,DR,DR8,,specific,DRB1*08,
+DR9,DR,DR9,,specific,DRB1*09,
+DR10,DR,DR10,,specific,DRB1*10,
+DR51,DR,DR51,,associated,DRB5*01;DRB5*02,"Produit du gène DRB5, associé aux haplotypes DR15 et DR16."
+DR52,DR,DR52,,associated,DRB3*01;DRB3*02;DRB3*03,"Produits du gène DRB3, associés aux haplotypes DR3, DR5, DR6 et DR8."
+DR53,DR,DR53,,associated,DRB4*01;DRB4*03,"Produit du gène DRB4, associé aux haplotypes DR4, DR7 et DR9."
+DQ1,DQ,DQ1,,broad,,Famille large : DQ5 et DQ6.
+DQ2,DQ,DQ2,,specific,DQB1*02,
+DQ3,DQ,DQ3,,broad,DQB1*03,"Famille large : DQ7, DQ8 et DQ9."
+DQ4,DQ,DQ4,,specific,DQB1*04,
+DQ5,DQ,DQ5,DQ1,specific,DQB1*05,
+DQ6,DQ,DQ6,DQ1,specific,DQB1*06,
+DQ7,DQ,DQ7,DQ3,specific,DQB1*03:01;DQB1*03:04;DQB1*03:05;DQB1*03:19,
+DQ8,DQ,DQ8,DQ3,specific,DQB1*03:02,
+DQ9,DQ,DQ9,DQ3,specific,DQB1*03:03,
+DPw1,DP,DPw1,,cellular,DPB1*01:01,"Spécificité définie par typage cellulaire (HTC), historique."
+DPw2,DP,DPw2,,cellular,DPB1*02,
+DPw3,DP,DPw3,,cellular,DPB1*03:01,
+DPw4,DP,DPw4,,cellular,DPB1*04,
+DPw5,DP,DPw5,,cellular,DPB1*05:01,
+DPw6,DP,DPw6,,cellular,DPB1*06:01,

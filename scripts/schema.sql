@@ -138,6 +138,39 @@ CREATE INDEX idx_pair_mentions_pair ON pair_mentions(hla, outcome);
 CREATE INDEX idx_pair_mentions_pmid ON pair_mentions(pmid);
 
 -- =====================================================================
+-- COUCHE 2b - REFERENTIEL SEROLOGIQUE (data/reference/hla_serotypes.csv)
+-- =====================================================================
+-- Specificites serologiques (A2, B27, DR15, DQ2, Cw7...) et allèles qui
+-- les portent. Table de REFERENCE (pas une extraction NLP) : approximation
+-- pedagogique des correspondances OMS, a remplacer par le fichier IPD-IMGT/HLA
+-- (rel_dna_ser.txt) - cf. docs/SEROTYPES.md. Les liens sont projetes sur le
+-- vocabulaire du corpus : aucun lien orphelin (V10).
+
+CREATE TABLE serotypes (
+    serotype_id     TEXT PRIMARY KEY,   -- cle de route : "DR15", "Cw7", "DPw4"
+    locus           TEXT NOT NULL,      -- locus serologique : A, B, C, DR, DQ, DP
+    label           TEXT NOT NULL,
+    broad_serotype  TEXT REFERENCES serotypes(serotype_id),
+    kind            TEXT NOT NULL,
+    note            TEXT,
+    CHECK (locus IN ('A','B','C','DR','DQ','DP')),
+    CHECK (kind IN ('specific','broad','associated','cellular'))
+);
+CREATE INDEX idx_serotypes_locus ON serotypes(locus);
+CREATE INDEX idx_serotypes_broad ON serotypes(broad_serotype);
+
+CREATE TABLE serotype_alleles (
+    serotype_id TEXT NOT NULL REFERENCES serotypes(serotype_id),
+    hla         TEXT NOT NULL REFERENCES hla_entities(hla),
+    -- direct : liste explicitement ; group : 4-digit herite d'un groupe 2-digit
+    -- liste ; narrow : herite d'une specificite plus fine (famille large).
+    via         TEXT NOT NULL,
+    PRIMARY KEY (serotype_id, hla),
+    CHECK (via IN ('direct','group','narrow'))
+);
+CREATE INDEX idx_serotype_alleles_hla ON serotype_alleles(hla);
+
+-- =====================================================================
 -- COUCHE 3 - AGREGATS
 -- =====================================================================
 
@@ -210,7 +243,7 @@ CREATE TABLE annual_counts (
 -- =====================================================================
 
 CREATE VIRTUAL TABLE search_index USING fts5(
-    entity_type,   -- 'allele' | 'outcome' | 'article' | 'author'
+    entity_type,   -- 'allele' | 'serotype' | 'outcome' | 'article' | 'author'
     entity_id,
     label,
     content

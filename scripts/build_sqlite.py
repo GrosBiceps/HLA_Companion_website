@@ -26,6 +26,7 @@ import argparse
 import csv
 import hashlib
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -47,6 +48,18 @@ DEFAULT_BUILT_AT = "2026-07-01T00:00:00Z"
 PAGE_SIZE = 4096
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+
+# Referentiels (tables de reference, hors extraction NLP). Un fichier absent
+# donne des tables serologiques vides, jamais une erreur : la bascule vers les
+# donnees reelles ne doit pas dependre de lui.
+DEFAULT_REFERENCE_DIR = Path(__file__).resolve().parent.parent / "data" / "reference"
+SEROTYPES_FILE = "hla_serotypes.csv"
+
+SEROTYPE_LOCI = ("A", "B", "C", "DR", "DQ", "DP")
+SEROTYPE_KINDS = ("specific", "broad", "associated", "cellular")
+# Jeton d'allele du referentiel : sans prefixe « HLA- », 2 champs max.
+ALLELE_TOKEN_RE = re.compile(r"^[A-Z0-9]+\*\d{2,3}(:\d{2,3})?$")
+SEROTYPE_ID_RE = re.compile(r"^[A-Za-z]{1,2}w?\d{1,3}$")
 
 
 class ValidationError(Exception):
@@ -91,6 +104,14 @@ def read_sources(source_dir):
         "pair_mentions": _read_csv(src / "pair_mentions.csv"),
         "associations": _read_csv(src / "associations.csv"),
     }
+
+
+def read_serotype_reference(reference_dir):
+    """Lit le referentiel serologique ; liste vide si le fichier est absent."""
+    path = Path(reference_dir) / SEROTYPES_FILE if reference_dir else None
+    if path is None or not path.exists():
+        return []
+    return _read_csv(path)
 
 
 def author_slug(name):
@@ -274,10 +295,165 @@ def validate(data, n_articles_declared):
 
 
 # =====================================================================
+# REFERENTIEL SEROLOGIQUE (V9, V10)
+# =====================================================================
+
+def validate_serotype_reference(ref_rows):
+    """V9 : coherence STRUCTURELLE du referentiel, independante du corpus.
+
+    * identifiants uniques et bien formes, locus et nature connus ;
+    * `broad_serotype` designe une famille large (`kind = broad`) et ne
+      s'imbrique pas (une famille large n'a pas elle-meme de parent) ;
+    * chaque jeton d'allele est ecrit au format IPD-IMGT sans « HLA- »
+      (`A*02`, `DRB1*03:01`).
+    """
+    ids = set()
+    for r in ref_rows:
+        sid = (r.get("serotype_id") or "").strip()
+        if not sid or not SEROTYPE_ID_RE.match(sid):
+            raise ValidationError(f"V9: serotype_id invalide '{sid}'")
+        if sid in ids:
+            raise ValidationError(f"V9: serotype_id duplique '{sid}'")
+        ids.add(sid)
+        if (r.get("locus") or "").strip() not in SEROTYPE_LOCI:
+            raise ValidationError(
+                f"V9: serotype '{sid}' : locus inconnu '{r.get('locus')}'"
+            )
+        if (r.get("kind") or "").strip() not in SEROTYPE_KINDS:
+            raise ValidationError(
+                f"V9: serotype '{sid}' : nature inconnue '{r.get('kind')}'"
+            )
+        for token in _tokens(r.get("alleles")):
+            if not ALLELE_TOKEN_RE.match(token):
+                raise ValidationError(
+                    f"V9: serotype '{sid}' : allele mal forme '{token}'"
+                )
+
+    by_id = {(r["serotype_id"]).strip(): r for r in ref_rows}
+    for sid, r in by_id.items():
+        broad = (r.get("broad_serotype") or "").strip()
+        if not broad:
+            continue
+        parent = by_id.get(broad)
+        if parent is None:
+            raise ValidationError(
+                f"V9: serotype '{sid}' : famille large inconnue '{broad}'"
+            )
+        if parent["kind"].strip() != "broad":
+            raise ValidationError(
+                f"V9: serotype '{sid}' : '{broad}' n'est pas une famille large"
+            )
+        if (parent.get("broad_serotype") or "").strip():
+            raise ValidationError(
+                f"V9: serotype '{sid}' : familles larges imbriquees via '{broad}'"
+            )
+        if r["kind"].strip() == "broad":
+            raise ValidationError(
+                f"V9: la famille large '{sid}' ne peut pas avoir de parent"
+            )
+
+
+def _tokens(value):
+    return [t.strip() for t in (value or "").split(";") if t.strip()]
+
+
+def project_serotypes(ref_rows, hla_rows, strict=False):
+    """Projette le referentiel serologique sur le vocabulaire HLA du corpus.
+
+    Retourne `(serotypes, links, report)` :
+
+    * `serotypes` : lignes (serotype_id, locus, label, broad, kind, note) des
+      specificites retenues, familles larges d'abord ;
+    * `links` : triplets (serotype_id, hla, via), `via` valant `direct`
+      (liste dans le referentiel), `group` (4-digit d'un groupe 2-digit liste)
+      ou `narrow` (herite d'une specificite plus fine d'une famille large) ;
+    * `report` : `{"dropped_alleles": [...], "dropped_serotypes": [...]}`.
+
+    Un allele du referentiel absent du corpus est ECARTE (le referentiel est
+    plus large que n'importe quel corpus) ; une specificite sans aucun allele
+    retenu est ecartee a son tour. `strict=True` fait echouer (V10) au
+    premier allele absent. Aucun lien orphelin n'est jamais produit.
+    """
+    hla_ids = {r["hla"] for r in hla_rows}
+    resolution = {r["hla"]: r["resolution"] for r in hla_rows}
+    children = defaultdict(list)
+    for r in hla_rows:
+        parent = (r.get("parent_hla") or "").strip()
+        if parent and r["resolution"] == "4-digit":
+            children[parent].append(r["hla"])
+
+    dropped_alleles = []
+    links = {}  # (serotype_id, hla) -> via
+
+    def link(sid, hla, via):
+        links.setdefault((sid, hla), via)
+
+    rows = {r["serotype_id"].strip(): r for r in ref_rows}
+    for sid in sorted(rows):
+        for token in _tokens(rows[sid].get("alleles")):
+            hla = f"HLA-{token}"
+            if hla not in hla_ids:
+                if strict:
+                    raise ValidationError(
+                        f"V10: serotype '{sid}' : allele '{hla}' absent de "
+                        "hla_entities"
+                    )
+                dropped_alleles.append((sid, hla))
+                continue
+            link(sid, hla, "direct")
+            if resolution[hla] == "2-digit":
+                for child in sorted(children.get(hla, ())):
+                    link(sid, child, "group")
+
+    # Familles larges : union des liens des specificites plus fines.
+    for sid in sorted(rows):
+        broad = (rows[sid].get("broad_serotype") or "").strip()
+        if not broad:
+            continue
+        for (s2, hla), _ in sorted(links.items()):
+            if s2 == sid:
+                link(broad, hla, "narrow")
+
+    kept = {sid for sid, _ in links}
+    dropped_serotypes = sorted(set(rows) - kept)
+
+    def order(sid):
+        r = rows[sid]
+        return (0 if r["kind"].strip() == "broad" else 1, sid)
+
+    serotypes = [
+        (
+            sid, rows[sid]["locus"].strip(), (rows[sid].get("label") or sid).strip(),
+            (rows[sid].get("broad_serotype") or "").strip() or None,
+            rows[sid]["kind"].strip(), _text(rows[sid].get("note")),
+        )
+        for sid in sorted(kept, key=order)
+    ]
+    # Un parent ecarte ne peut pas rester reference : il l'est des qu'un
+    # enfant est garde (union), donc cette garde est un filet de securite.
+    kept_ids = {t[0] for t in serotypes}
+    for t in serotypes:
+        if t[3] is not None and t[3] not in kept_ids:
+            raise ValidationError(
+                f"V10: serotype '{t[0]}' : famille large ecartee '{t[3]}'"
+            )
+    link_rows = [(sid, hla, via) for (sid, hla), via in sorted(links.items())]
+    for sid, hla, _ in link_rows:
+        if hla not in hla_ids or sid not in kept_ids:
+            raise ValidationError(f"V10: lien orphelin ({sid}, {hla})")
+    report = {
+        "dropped_alleles": dropped_alleles,
+        "dropped_serotypes": dropped_serotypes,
+    }
+    return serotypes, link_rows, report
+
+
+# =====================================================================
 # CONSTRUCTION
 # =====================================================================
 
-def _populate(con, data, version, universe, is_synthetic, notes, built_at):
+def _populate(con, data, version, universe, is_synthetic, notes, built_at,
+              serotypes=(), serotype_links=()):
     """Remplit la base dans l'ordre des dependances FK.
 
     Toutes les collections sont triees par cle primaire avant insertion :
@@ -405,6 +581,17 @@ def _populate(con, data, version, universe, is_synthetic, notes, built_at):
         ],
     )
 
+    # --- serotypes / serotype_alleles (referentiel projete, cf. V9/V10) --
+    con.executemany(
+        "INSERT INTO serotypes (serotype_id, locus, label, broad_serotype, "
+        "kind, note) VALUES (?,?,?,?,?,?)",
+        list(serotypes),
+    )
+    con.executemany(
+        "INSERT INTO serotype_alleles (serotype_id, hla, via) VALUES (?,?,?)",
+        list(serotype_links),
+    )
+
     # --- hla_mentions / outcome_mentions --------------------------------
     # Derivees des pair_mentions : une mention d'entite par mention de paire.
     con.executemany(
@@ -488,22 +675,40 @@ def _populate(con, data, version, universe, is_synthetic, notes, built_at):
         [(y, annual[y]) for y in sorted(annual)],
     )
 
-    _populate_search_index(con, articles, ordered, by_id, present, display_of)
+    _populate_search_index(con, articles, ordered, by_id, present, display_of,
+                           serotypes, serotype_links)
 
 
 def _populate_search_index(con, articles, hla_ordered, hla_by_id, outcomes,
-                           author_display):
+                           author_display, serotypes=(), serotype_links=()):
     """Index FTS5 unifie : alleles, complications, articles, auteurs.
 
     Insere dans un ordre stable (type puis identifiant) : le contenu des
     tables shadow FTS5 depend de l'ordre d'insertion.
     """
+    # Specificites serologiques portees par chaque allele : elles entrent dans
+    # son contenu indexe, pour que « DR15 » retrouve aussi DRB1*15 en
+    # recherche plein texte.
+    sero_of = defaultdict(set)
+    for sid, hla, _ in serotype_links:
+        sero_of[hla].add(sid)
+
     rows = []
     for h in sorted(hla_ordered):
         r = hla_by_id[h]
         rows.append((
             "allele", h, h,
-            " ".join([h, r["locus"], r["hla_class"], r["resolution"]]),
+            " ".join([h, r["locus"], r["hla_class"], r["resolution"]]
+                     + sorted(sero_of.get(h, ()))),
+        ))
+    members = defaultdict(list)
+    for sid, hla, _ in serotype_links:
+        members[sid].append(hla)
+    for sid, locus, label, broad, kind, _ in sorted(serotypes):
+        rows.append((
+            "serotype", sid, label,
+            " ".join([sid, label, f"serotype {locus}", broad or ""]
+                     + [m.replace("HLA-", "") for m in sorted(members[sid])]),
         ))
     for outcome in outcomes:
         label, category = OUTCOME_LABELS[outcome]
@@ -528,7 +733,8 @@ def _populate_search_index(con, articles, hla_ordered, hla_by_id, outcomes,
 
 
 def build(source_dir, out_path, version, universe="A", is_synthetic=False,
-          notes=None, built_at=DEFAULT_BUILT_AT):
+          notes=None, built_at=DEFAULT_BUILT_AT,
+          reference_dir=DEFAULT_REFERENCE_DIR, strict_serotypes=False):
     """Construit la base scellee et retourne son SHA-256 hexadecimal.
 
     `built_at` est un parametre a valeur par defaut STABLE : deux builds des
@@ -543,6 +749,11 @@ def build(source_dir, out_path, version, universe="A", is_synthetic=False,
 
     # 1-2. Valider AVANT toute ecriture.
     validate(data, n_articles_declared=len(data["articles"]))
+    reference = read_serotype_reference(reference_dir)
+    validate_serotype_reference(reference)
+    serotypes, serotype_links, _ = project_serotypes(
+        reference, data["hla_entities"], strict=strict_serotypes
+    )
 
     tmp_dir = tempfile.mkdtemp(prefix="build_sqlite_")
     tmp_db = Path(tmp_dir) / "corpus.sqlite"
@@ -554,7 +765,8 @@ def build(source_dir, out_path, version, universe="A", is_synthetic=False,
             con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
             con.execute("PRAGMA foreign_keys = ON")
 
-            _populate(con, data, version, universe, is_synthetic, notes, built_at)
+            _populate(con, data, version, universe, is_synthetic, notes, built_at,
+                      serotypes, serotype_links)
             con.commit()
 
             violations = con.execute("PRAGMA foreign_key_check").fetchall()
@@ -601,6 +813,11 @@ def main(argv=None):
                         help="Marque le corpus comme fictif (bandeau dans l'UI).")
     parser.add_argument("--notes", default=None,
                         help="Note libre stockee dans corpus_version.")
+    parser.add_argument("--reference", default=str(DEFAULT_REFERENCE_DIR),
+                        help="Repertoire des referentiels (hla_serotypes.csv).")
+    parser.add_argument("--strict-serotypes", action="store_true",
+                        help="Echoue si un allele du referentiel serologique "
+                             "est absent du corpus (V10) au lieu de l'ecarter.")
     parser.add_argument("--built-at", default=DEFAULT_BUILT_AT,
                         help="Horodatage ISO8601 stable ecrit dans la base.")
     args = parser.parse_args(argv)
@@ -614,6 +831,8 @@ def main(argv=None):
             is_synthetic=args.synthetic,
             notes=args.notes,
             built_at=args.built_at,
+            reference_dir=args.reference,
+            strict_serotypes=args.strict_serotypes,
         )
     except ValidationError as exc:
         print(f"ECHEC DE VALIDATION : {exc}", file=sys.stderr)

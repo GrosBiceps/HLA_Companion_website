@@ -185,6 +185,27 @@ export function MatrixHeatmap({ matrix }: { matrix: ClientMatrix }) {
               }
             />
           </div>
+          {matrix.resolution === "4-digit" && (matrix.loci?.length ?? 0) > 1 ? (
+            <div className="flex items-center gap-2.5">
+              <span className="eyebrow">Locus</span>
+              <SegmentedControl
+                ariaLabel="Locus affiché"
+                options={(matrix.loci ?? []).map((l) => ({
+                  value: l.locus,
+                  label: l.locus,
+                  count: l.n,
+                }))}
+                value={matrix.locus ?? ""}
+                onChange={(v) =>
+                  startTransition(() => {
+                    router.push(`/matrice?resolution=4-digit&locus=${encodeURIComponent(v)}`, {
+                      scroll: false,
+                    });
+                  })
+                }
+              />
+            </div>
+          ) : null}
           <div className="flex items-center gap-2.5">
             <span className="eyebrow">Tri</span>
             <SegmentedControl
@@ -236,7 +257,8 @@ export function MatrixHeatmap({ matrix }: { matrix: ClientMatrix }) {
       )}
 
       <p className="tabular text-xs text-fg-subtle" aria-live="polite">
-        {view.nRows} allèles × {nCols} complications ·{" "}
+        {view.nRows} allèles
+        {matrix.locus ? ` du locus ${matrix.locus}` : ""} × {nCols} complications ·{" "}
         {matrix.cells.length} paires co-mentionnées sur{" "}
         {matrix.alleles.length * nCols} croisements possibles
         {view.nHiddenRows > 0 ? ` · ${view.nHiddenRows} allèles masqués` : ""}

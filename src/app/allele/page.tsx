@@ -5,6 +5,7 @@ import { AlleleBrowser } from "@/components/entity/AlleleBrowser";
 import { buildAlleleTree } from "@/lib/allele-tree";
 import { formatInt } from "@/lib/format";
 import { getAlleleCatalog } from "@/lib/queries";
+import { getSerotypeCatalog, getSerotypeIdsByAllele } from "@/lib/serotypes";
 
 /**
  * Index des alleles — porte d'entree « Explorer par allele ».
@@ -26,7 +27,18 @@ export const metadata: Metadata = {
 };
 
 export default function AlleleIndexPage() {
-  const catalog = getAlleleCatalog();
+  const serotypeIds = getSerotypeIdsByAllele();
+  const catalog = getAlleleCatalog().map((e) => ({
+    ...e,
+    serotypes: serotypeIds.get(e.hla)?.specific ?? [],
+    broadSerotypes: serotypeIds.get(e.hla)?.broad ?? [],
+  }));
+  const serotypes = getSerotypeCatalog().map((s) => ({
+    id: s.serotypeId,
+    label: s.label,
+    kind: s.kind,
+    nAlleles: s.nGroups + s.nAlleles,
+  }));
   const tree = buildAlleleTree(catalog);
   const n2 = catalog.filter((e) => e.resolution === "2-digit").length;
   const n4 = catalog.filter((e) => e.resolution === "4-digit").length;
@@ -38,7 +50,7 @@ export default function AlleleIndexPage() {
       <PageHeader
         eyebrow="Explorer par allèle"
         title="Allèles HLA du corpus"
-        description="La nomenclature telle que l'extraction l'a rencontrée : classe, locus, puis résolution 2-digit et 4-digit. Chaque forme a sa fiche et ses propres articles."
+        description="La nomenclature telle que l'extraction l'a rencontrée : classe, locus, puis résolution 2-digit et 4-digit. Chaque forme a sa fiche et ses propres articles. Le filtre comprend aussi les sérotypes (DR15, B27…)."
       />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -79,7 +91,7 @@ export default function AlleleIndexPage() {
         </p>
       </Callout>
 
-      <AlleleBrowser tree={tree} />
+      <AlleleBrowser tree={tree} serotypes={serotypes} />
     </div>
   );
 }

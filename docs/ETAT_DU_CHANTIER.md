@@ -5,6 +5,29 @@ les décisions prises en cours de route.
 
 ---
 
+## Vocabulaire allélique et sérotypes (02/10/2026)
+
+Le vocabulaire HLA du générateur passe à des noms IPD-IMGT réalistes
+(`scripts/hla_vocabulary.py`), élagués des allèles jamais cités. Seed 42,
+4 000 articles :
+
+| Élément | Avant | Maintenant |
+|---|---|---|
+| Groupes 2-digit | 47 | **137** (A, B, C, DRB1, DRB3/4/5, DQA1, DQB1, DPB1) |
+| Allèles 4-digit | 97 | **858** (≈ 750 cités 1 à 5 fois : longue traîne de type Zipf) |
+| Loci | 6 | **10** |
+| Articles | 3 000 | **4 000** |
+| Associations | 2 365 | ≈ 6 300 (la famille FDR ignore les paires vues une seule fois) |
+| Base SQLite | 13,9 Mo | ≈ 18 Mo (génération + build < 3 s) |
+| Sérotypes | — | **131** spécificités, ≈ 1 300 liens (`docs/SEROTYPES.md`) |
+
+Matrice : en 4-digit elle est paginée par locus (`?resolution=4-digit&locus=B`).
+Index des allèles : groupes repliés par défaut. Recherche et pages sérotype :
+voir `docs/SEROTYPES.md`. Budget de latence testé (< 100 ms) dans
+`src/__tests__/performance.test.ts`.
+
+---
+
 ## Jeu synthétique élargi (02/10/2026)
 
 Le générateur (`scripts/gen_synthetic.py`) produit désormais par défaut un

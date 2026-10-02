@@ -89,7 +89,7 @@ Ces nombres restent FICTIFS et ne sont pas comparables aux sorties du vrai
 pipeline : ils sont seulement internement coherents.
 
 Usage :
-    python scripts/gen_synthetic.py --out data/synthetic --n-articles 3000 --seed 42
+    python scripts/gen_synthetic.py --out data/synthetic --n-articles 4000 --seed 42
 """
 
 import argparse

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Search, X } from "lucide-react";
+import { ChevronRight, Search, X } from "lucide-react";
 import { AlleleName } from "@/components/ui/AlleleName";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { cn } from "@/lib/cn";
@@ -10,6 +10,7 @@ import { formatInt, plural } from "@/lib/format";
 import { hlaClassColor } from "@/lib/theme";
 import {
   matchesAlleleQuery,
+  serotypeQueryKeys,
   type AlleleTree,
   type TreeAllele,
   type TreeLocus,
@@ -24,36 +25,61 @@ import {
  * lui-meme OU l'un de ses 4-digit correspond, pour que le contexte de
  * nomenclature ne disparaisse jamais sous le filtre.
  *
+ * UN FILTRE, DEUX NOTATIONS. Le filtre comprend un allele (« a*02 »,
+ * « dqb1 02 01 ») ET un serotype (« DR15 », « B27 », « Cw7 », « DR2 ») : un
+ * serotype reconnu ne montre que les alleles qui le portent, et une bande
+ * rappelle le serotype avec un lien vers sa fiche.
+ *
+ * PERFORMANCE. Avec ~900 alleles 4-digit, les groupes sont REPLIES par defaut :
+ * les pastilles 4-digit ne sont rendues qu'a l'ouverture d'un groupe. Un
+ * filtre actif deplie les groupes restants s'ils sont peu nombreux.
+ *
  * Le filtre « au-dessus du seuil » est un choix EXPLICITE du lecteur (il
  * part de « Tous ») ; il dit combien d'entites il retire.
  */
 
 type Scope = "all" | "marked";
 
+export interface BrowserSerotype {
+  id: string;
+  label: string;
+  kind: string;
+  nAlleles: number;
+}
+
+/** Au-dela de ce nombre de groupes affiches, le filtre ne deplie rien tout seul. */
+const AUTO_OPEN_MAX_GROUPS = 40;
+
 function href(hla: string): string {
   return `/allele/${encodeURIComponent(hla)}`;
 }
 
-function keepAllele(a: TreeAllele, q: string, scope: Scope): boolean {
-  return matchesAlleleQuery(a.hla, q) && (scope === "all" || a.nMarked > 0);
+type Match = (a: TreeAllele) => boolean;
+
+function keepAllele(a: TreeAllele, match: Match, scope: Scope): boolean {
+  return match(a) && (scope === "all" || a.nMarked > 0);
 }
 
-function filterLocus(l: TreeLocus, q: string, scope: Scope): TreeLocus | null {
+function filterLocus(
+  l: TreeLocus,
+  match: Match,
+  scope: Scope,
+): TreeLocus | null {
   const alleles: TreeTwoDigit[] = [];
   for (const a of l.alleles) {
-    const children = a.children.filter((c) => keepAllele(c, q, scope));
-    if (keepAllele(a, q, scope) || children.length > 0) {
+    const children = a.children.filter((c) => keepAllele(c, match, scope));
+    if (keepAllele(a, match, scope) || children.length > 0) {
       alleles.push({
         ...a,
         // Le parent correspond : on garde tous ses enfants filtres par le
         // seul critere de portee, pour montrer la famille complete.
-        children: matchesAlleleQuery(a.hla, q)
+        children: match(a)
           ? a.children.filter((c) => scope === "all" || c.nMarked > 0)
           : children,
       });
     }
   }
-  const orphans = l.orphans.filter((o) => keepAllele(o, q, scope));
+  const orphans = l.orphans.filter((o) => keepAllele(o, match, scope));
   if (alleles.length === 0 && orphans.length === 0) return null;
   return { ...l, alleles, orphans };
 }
@@ -70,9 +96,45 @@ function MarkedHint({ n }: { n: number }) {
   );
 }
 
-export function AlleleBrowser({ tree }: { tree: AlleleTree }) {
+export function AlleleBrowser({
+  tree,
+  serotypes = [],
+}: {
+  tree: AlleleTree;
+  /** Referentiel serologique, pour reconnaitre « DR15 » dans le filtre. */
+  serotypes?: BrowserSerotype[];
+}) {
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<Scope>("all");
+  // Ouverture manuelle d'un groupe ; absent = valeur par defaut (cf. autoOpen).
+  const [override, setOverride] = useState<Record<string, boolean>>({});
+
+  const serotypeById = useMemo(
+    () => new Map(serotypes.map((s) => [s.id.toUpperCase(), s])),
+    [serotypes],
+  );
+
+  // Serotypes designes par la saisie : ils prennent le pas sur la lecture
+  // « texte d'allele » (« A2 » est le serotype A2, pas le debut de A*24).
+  const known = useMemo(
+    () =>
+      serotypeQueryKeys(query).flatMap((k) => {
+        const s = serotypeById.get(k);
+        return s ? [s] : [];
+      }),
+    [query, serotypeById],
+  );
+
+  const match: Match = useMemo(() => {
+    if (known.length > 0) {
+      const keys = new Set(known.map((s) => s.id.toUpperCase()));
+      return (a) =>
+        [...(a.serotypes ?? []), ...(a.broadSerotypes ?? [])].some((id) =>
+          keys.has(id.toUpperCase()),
+        );
+    }
+    return (a) => matchesAlleleQuery(a.hla, query);
+  }, [known, query]);
 
   const filtered = useMemo(
     () =>
@@ -80,13 +142,13 @@ export function AlleleBrowser({ tree }: { tree: AlleleTree }) {
         .map((c) => ({
           ...c,
           loci: c.loci
-            .map((l) => filterLocus(l, query, scope))
+            .map((l) => filterLocus(l, match, scope))
             .filter((l): l is TreeLocus => l !== null),
         }))
         .filter((c) => c.loci.length > 0),
-    [tree, query, scope],
+    [tree, match, scope],
   );
-  const others = tree.others.filter((o) => keepAllele(o, query, scope));
+  const others = tree.others.filter((o) => keepAllele(o, match, scope));
 
   const count = (t: { loci: TreeLocus[] }[]) =>
     t.reduce(
@@ -103,6 +165,22 @@ export function AlleleBrowser({ tree }: { tree: AlleleTree }) {
     );
   const total = count(tree.classes) + tree.others.length;
   const shown = count(filtered) + others.length;
+  const shownGroups = filtered.reduce(
+    (s, c) => s + c.loci.reduce((s2, l) => s2 + l.alleles.length, 0),
+    0,
+  );
+  const autoOpen =
+    query.trim().length > 0 && shownGroups <= AUTO_OPEN_MAX_GROUPS;
+  const isOpen = (hla: string) => override[hla] ?? autoOpen;
+
+  const setAll = (open: boolean) => {
+    const next: Record<string, boolean> = {};
+    for (const c of filtered)
+      for (const l of c.loci)
+        for (const a of l.alleles) if (a.children.length > 0) next[a.hla] = open;
+    setOverride(next);
+  };
+
   // Entites ayant elles-memes au moins une co-occurrence marquee (les
   // 2-digit gardes pour le contexte d'un enfant marque ne comptent pas).
   const markedTotal =
@@ -137,14 +215,20 @@ export function AlleleBrowser({ tree }: { tree: AlleleTree }) {
           <input
             type="search"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filtrer : A*02, DQB1*02:01, DRB1…"
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setOverride({});
+            }}
+            placeholder="Filtrer : A*02, DQB1*02:01, DRB1… ou un sérotype (DR15, B27)"
             className="h-10 w-full rounded-lg bg-surface pl-9 pr-9 font-mono text-sm text-fg shadow-xs ring-1 ring-inset ring-line-strong placeholder:font-sans placeholder:text-fg-faint focus:outline-none focus:ring-2 focus:ring-primary/60"
           />
           {query ? (
             <button
               type="button"
-              onClick={() => setQuery("")}
+              onClick={() => {
+                setQuery("");
+                setOverride({});
+              }}
               aria-label="Effacer le filtre"
               className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-subtle hover:bg-fg/[0.06] hover:text-fg"
             >
@@ -167,14 +251,62 @@ export function AlleleBrowser({ tree }: { tree: AlleleTree }) {
         />
       </div>
 
-      <p className="text-xs text-fg-muted" aria-live="polite">
-        {shown === total
-          ? `${plural(total, "entité HLA", "entités HLA")}.`
-          : `${formatInt(shown)} sur ${plural(total, "entité HLA", "entités HLA")} affichées.`}
-        {scope === "marked"
-          ? " Filtre actif : seules les entités ayant au moins une co-occurrence au-dessus du seuil sont listées."
-          : ""}
-      </p>
+      {known.length > 0 ? (
+        <ul className="space-y-2" aria-label="Sérotype reconnu">
+          {known.map((s) => (
+            <li
+              key={s.id}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border-l-[3px] border-primary bg-primary-soft px-4 py-2.5 text-sm text-primary-soft-fg"
+            >
+              <span>
+                <strong>
+                  {s.kind === "broad" ? "Famille large" : "Sérotype"} {s.label}
+                </strong>{" "}
+                : {plural(s.nAlleles, "allèle")} dans le corpus, listés
+                ci-dessous.
+              </span>
+              <Link
+                href={`/serotype/${encodeURIComponent(s.id)}`}
+                className="link ml-auto font-medium"
+              >
+                Fiche du sérotype
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-fg-muted" aria-live="polite">
+          {shown === total
+            ? `${plural(total, "entité HLA", "entités HLA")}.`
+            : `${formatInt(shown)} sur ${plural(total, "entité HLA", "entités HLA")} affichées.`}
+          {scope === "marked"
+            ? " Filtre actif : seules les entités ayant au moins une co-occurrence au-dessus du seuil sont listées."
+            : ""}
+        </p>
+        {shownGroups > 0 ? (
+          <div className="flex items-center gap-1 text-xs">
+            <button
+              type="button"
+              onClick={() => setAll(true)}
+              className="rounded-md px-2 py-1 font-medium text-primary hover:bg-primary-soft"
+            >
+              Tout déplier
+            </button>
+            <span aria-hidden="true" className="text-fg-faint">
+              ·
+            </span>
+            <button
+              type="button"
+              onClick={() => setAll(false)}
+              className="rounded-md px-2 py-1 font-medium text-primary hover:bg-primary-soft"
+            >
+              Tout replier
+            </button>
+          </div>
+        ) : null}
+      </div>
 
       {filtered.length === 0 && others.length === 0 ? (
         <p className="rounded-xl border border-dashed border-line-strong px-4 py-8 text-center text-sm text-fg-muted">
@@ -196,9 +328,16 @@ export function AlleleBrowser({ tree }: { tree: AlleleTree }) {
             />
             Classe {c.hlaClass}
           </h2>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
             {c.loci.map((l) => (
-              <LocusCard key={l.locus} locus={l} />
+              <LocusCard
+                key={l.locus}
+                locus={l}
+                isOpen={isOpen}
+                onToggle={(hla) =>
+                  setOverride((o) => ({ ...o, [hla]: !isOpen(hla) }))
+                }
+              />
             ))}
           </div>
         </section>
@@ -235,10 +374,16 @@ export function AlleleBrowser({ tree }: { tree: AlleleTree }) {
   );
 }
 
-function LocusCard({ locus }: { locus: TreeLocus }) {
-  const n =
-    locus.alleles.reduce((s, a) => s + 1 + a.children.length, 0) +
-    locus.orphans.length;
+function LocusCard({
+  locus,
+  isOpen,
+  onToggle,
+}: {
+  locus: TreeLocus;
+  isOpen: (hla: string) => boolean;
+  onToggle: (hla: string) => void;
+}) {
+  const n4 = locus.alleles.reduce((s, a) => s + a.children.length, 0);
   return (
     <article
       id={`locus-${locus.locus}`}
@@ -254,51 +399,91 @@ function LocusCard({ locus }: { locus: TreeLocus }) {
           Locus <span className="allele">{locus.locus}</span>
         </h3>
         <span className="tabular text-2xs text-fg-subtle">
-          {plural(n, "allèle")}
+          {plural(locus.alleles.length, "groupe")} · {plural(n4 + locus.orphans.length, "allèle")} 4-digit
         </span>
       </header>
       <ul className="divide-y divide-line/70">
-        {locus.alleles.map((a) => (
-          <li key={a.hla} className="px-4 py-2">
-            <div className="flex items-center gap-2">
-              <Link href={href(a.hla)} className="group min-w-0 flex-1">
-                <AlleleName
-                  hla={a.hla}
-                  className="text-sm font-semibold text-fg group-hover:text-primary group-hover:underline"
-                />
-              </Link>
-              <MarkedHint n={a.nMarked} />
-              <span className="tabular w-16 shrink-0 text-right text-xs text-fg-subtle">
-                {formatInt(a.nArticles)} art.
-              </span>
-            </div>
-            {a.children.length > 0 ? (
-              <ul className="mt-1.5 flex flex-wrap gap-1">
-                {a.children.map((c) => (
-                  <li key={c.hla}>
-                    <Link
-                      href={href(c.hla)}
-                      title={`${c.hla} — ${plural(c.nArticles, "article")}`}
+        {locus.alleles.map((a) => {
+          const open = isOpen(a.hla);
+          const listId = `kids-${a.hla.replace(/[^A-Za-z0-9]/g, "_")}`;
+          return (
+            <li key={a.hla} className="px-3 py-1.5 sm:px-4">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <Link href={href(a.hla)} className="group min-w-0">
+                  <AlleleName
+                    hla={a.hla}
+                    className="text-sm font-semibold text-fg group-hover:text-primary group-hover:underline"
+                  />
+                </Link>
+                {(a.serotypes ?? []).slice(0, 3).map((s) => (
+                  <Link
+                    key={s}
+                    href={`/serotype/${encodeURIComponent(s)}`}
+                    title={`Sérotype ${s}`}
+                    className="rounded-full bg-surface-muted px-1.5 py-px text-2xs font-medium text-fg-muted ring-1 ring-inset ring-line hover:text-primary hover:ring-primary/40"
+                  >
+                    {s}
+                  </Link>
+                ))}
+                <span className="ml-auto flex items-center gap-2">
+                  <MarkedHint n={a.nMarked} />
+                  <span className="tabular text-xs text-fg-subtle">
+                    {formatInt(a.nArticles)} art.
+                  </span>
+                  {a.children.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onToggle(a.hla)}
+                      aria-expanded={open}
+                      aria-controls={listId}
+                      aria-label={`${open ? "Replier" : "Déplier"} les ${plural(a.children.length, "allèle")} 4-digit de ${a.hla}`}
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs ring-1 ring-inset transition-colors",
-                        c.nMarked > 0
-                          ? "bg-primary-soft text-primary-soft-fg ring-primary/15 hover:ring-primary/40"
+                        "tabular inline-flex h-6 items-center gap-0.5 rounded-md px-1.5 text-2xs font-medium ring-1 ring-inset transition-colors",
+                        open
+                          ? "bg-primary-soft text-primary-soft-fg ring-primary/20"
                           : "bg-surface-muted text-fg-muted ring-line hover:text-fg hover:ring-line-strong",
                       )}
                     >
-                      <span className="allele">
-                        {c.hla.replace(/^HLA-[A-Z0-9]+\*/, "*")}
-                      </span>
-                      <span className="tabular text-2xs opacity-70">
-                        {c.nArticles}
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </li>
-        ))}
+                      <ChevronRight
+                        aria-hidden="true"
+                        className={cn(
+                          "h-3 w-3 transition-transform",
+                          open && "rotate-90",
+                        )}
+                      />
+                      {a.children.length}
+                    </button>
+                  ) : null}
+                </span>
+              </div>
+              {open && a.children.length > 0 ? (
+                <ul id={listId} className="mt-1.5 flex flex-wrap gap-1">
+                  {a.children.map((c) => (
+                    <li key={c.hla}>
+                      <Link
+                        href={href(c.hla)}
+                        title={`${c.hla} — ${plural(c.nArticles, "article")}`}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs ring-1 ring-inset transition-colors",
+                          c.nMarked > 0
+                            ? "bg-primary-soft text-primary-soft-fg ring-primary/15 hover:ring-primary/40"
+                            : "bg-surface-muted text-fg-muted ring-line hover:text-fg hover:ring-line-strong",
+                        )}
+                      >
+                        <span className="allele">
+                          {c.hla.replace(/^HLA-[A-Z0-9]+\*/, "*")}
+                        </span>
+                        <span className="tabular text-2xs opacity-70">
+                          {c.nArticles}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
         {locus.orphans.map((o) => (
           <li key={o.hla} className="flex items-center gap-2 px-4 py-2">
             <Link

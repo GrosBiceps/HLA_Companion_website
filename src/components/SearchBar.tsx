@@ -253,7 +253,7 @@ function SearchResults({
                   onMouseMove={() => onHover(index)}
                   onClick={onNavigate}
                   className={cn(
-                    "flex items-center gap-3 rounded-lg py-2 pr-2.5 text-sm",
+                    "flex items-center gap-3 rounded-lg pr-2.5 text-sm", child ? "py-1" : "py-2",
                     child ? "pl-8" : "pl-2.5",
                     selected ? "bg-primary-soft text-fg" : "text-fg hover:bg-surface-muted",
                   )}

@@ -10,7 +10,7 @@ import {
   LegendItem,
   SignalScale,
 } from "@/components/charts";
-import { getAssociationMatrix } from "@/lib/queries";
+import { getAssociationMatrix, getMatrixLoci } from "@/lib/queries";
 import { toClientMatrix } from "@/lib/matrix";
 
 /**
@@ -30,7 +30,7 @@ export const metadata: Metadata = {
 };
 
 type SearchParams = {
-  searchParams: Promise<{ resolution?: string }>;
+  searchParams: Promise<{ resolution?: string; locus?: string }>;
 };
 
 export default async function MatricePage({ searchParams }: SearchParams) {
@@ -39,7 +39,14 @@ export default async function MatricePage({ searchParams }: SearchParams) {
 
   let matrix;
   try {
-    matrix = toClientMatrix(getAssociationMatrix(resolution));
+    // En 4 chiffres (~900 lignes), la grille est paginee par locus : une table
+    // DOM de 20 000 cases figerait le navigateur. Le 2 chiffres reste entier.
+    let locus: string | undefined;
+    if (resolution === "4-digit") {
+      const loci = getMatrixLoci(resolution).map((l) => l.locus);
+      locus = loci.includes(sp.locus ?? "") ? sp.locus : loci[0];
+    }
+    matrix = toClientMatrix(getAssociationMatrix(resolution, locus));
   } catch (error) {
     console.error("Echec de la lecture de la matrice :", error);
     matrix = null;

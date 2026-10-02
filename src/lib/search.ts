@@ -181,7 +181,7 @@ function getIndex(db: Database.Database): SearchIndex {
 // --------------------------------------------------------------------------
 
 /** Nombre maximal d'enfants proposes sous un resultat parent. */
-const MAX_CHILDREN = 8;
+const MAX_CHILDREN = 6;
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n > 1 ? many : one}`;

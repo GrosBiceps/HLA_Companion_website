@@ -1268,3 +1268,200 @@ export function getPublicationsByYear(): PublicationsPerYear[] {
   }
   return out;
 }
+
+// ==========================================================================
+// ACCUEIL (landing) — AJOUT PUR, bloc delimite.
+//
+// Requetes en lecture seule pour la page d'accueil : vitrine des signaux les
+// plus marques, apercu par locus, catalogue des complications par categorie,
+// auteurs les plus publies. Aucune ne renvoie de metrique brute (NPMI, OR,
+// FDR) : l'accueil n'affiche que des niveaux qualitatifs et des effectifs
+// verifiables. Testees dans `src/__tests__/landing-queries.test.ts`.
+// ==========================================================================
+
+/** Paire (allele, complication) mise en avant sur l'accueil. */
+export interface SignalHighlight {
+  hla: string;
+  locus: string;
+  hlaClass: string;
+  resolution: string;
+  outcome: string;
+  /** Libelle AFFICHABLE (table `outcomes`), jamais la cle technique. */
+  label: string;
+  category: string;
+  signalLevel: SignalLevel;
+  /** Phrases sources (= effectif verifiable de la paire). */
+  nCooccurrence: number;
+  nNegated: number;
+}
+
+/**
+ * Paires aux niveaux de signal demandes (fort et net par defaut), limitees
+ * aux ALLELES (2-digit et 4-digit) : les entites agregees (`HLA-mismatch`,
+ * `HLA-eplet`) ne sont pas des alleles et n'ont pas leur place dans une
+ * vitrine « allele → complication ».
+ *
+ * Tri : ordre de `levels`, puis effectif decroissant, puis cles (stable).
+ */
+export function getSignalHighlights({
+  levels = ["strong", "clear"],
+  resolutions = ["2-digit", "4-digit"],
+  limit = 12,
+}: {
+  levels?: SignalLevel[];
+  resolutions?: ("2-digit" | "4-digit")[];
+  limit?: number;
+} = {}): SignalHighlight[] {
+  if (levels.length === 0 || resolutions.length === 0 || limit <= 0) return [];
+  const levelOrder = `CASE a.signal_level ${levels
+    .map((_, i) => `WHEN ? THEN ${i}`)
+    .join(" ")} ELSE ${levels.length} END`;
+  const rows = getDb()
+    .prepare(
+      `SELECT a.hla, h.locus, h.hla_class, h.resolution,
+              a.outcome, o.label, o.category,
+              a.signal_level, a.n_cooccurrence, a.n_negated
+         FROM associations a
+         JOIN hla_entities h ON h.hla = a.hla
+         JOIN outcomes o ON o.outcome = a.outcome
+        WHERE a.signal_level IN (${levels.map(() => "?").join(", ")})
+          AND h.resolution IN (${resolutions.map(() => "?").join(", ")})
+        ORDER BY ${levelOrder}, a.n_cooccurrence DESC, a.hla ASC, a.outcome ASC
+        LIMIT ?`,
+    )
+    .all(...levels, ...resolutions, ...levels, limit) as {
+    hla: string;
+    locus: string;
+    hla_class: string;
+    resolution: string;
+    outcome: string;
+    label: string;
+    category: string;
+    signal_level: SignalLevel;
+    n_cooccurrence: number;
+    n_negated: number;
+  }[];
+  return rows.map((r) => ({
+    hla: r.hla,
+    locus: r.locus,
+    hlaClass: r.hla_class,
+    resolution: r.resolution,
+    outcome: r.outcome,
+    label: r.label,
+    category: r.category,
+    signalLevel: r.signal_level,
+    nCooccurrence: r.n_cooccurrence,
+    nNegated: r.n_negated,
+  }));
+}
+
+/** Apercu d'un locus HLA pour les points d'entree de l'accueil. */
+export interface LocusOverview {
+  locus: string;
+  hlaClass: string;
+  nAlleles2Digit: number;
+  nAlleles4Digit: number;
+  /** Alleles (2 ou 4-digit) les plus mentionnes du locus. */
+  topAlleles: { hla: string; resolution: string; nMentions: number }[];
+}
+
+/**
+ * Loci dans l'ordre A, B, C, DRB1, DQB1, DPB1 (classe I puis II), avec leurs
+ * `perLocus` alleles les plus mentionnes, toutes resolutions alleliques
+ * confondues. Seuls les loci portant au moins un allele sont rendus.
+ */
+export function getLocusOverview(perLocus = 3): LocusOverview[] {
+  const db = getDb();
+  const loci = db
+    .prepare(
+      `SELECT locus, hla_class,
+              SUM(resolution = '2-digit') AS n2,
+              SUM(resolution = '4-digit') AS n4
+         FROM hla_entities
+        WHERE resolution IN ('2-digit', '4-digit')
+        GROUP BY locus, hla_class`,
+    )
+    .all() as { locus: string; hla_class: string; n2: number; n4: number }[];
+  const top = db.prepare(
+    `SELECT hla, resolution, n_mentions FROM hla_entities
+      WHERE locus = ? AND resolution IN ('2-digit', '4-digit')
+      ORDER BY n_mentions DESC, hla ASC LIMIT ?`,
+  );
+  const rank = (l: string) => {
+    const i = LOCUS_ORDER.indexOf(l);
+    return i === -1 ? LOCUS_ORDER.length : i;
+  };
+  return loci
+    .sort((a, b) => rank(a.locus) - rank(b.locus) || a.locus.localeCompare(b.locus))
+    .map((l) => ({
+      locus: l.locus,
+      hlaClass: l.hla_class,
+      nAlleles2Digit: l.n2,
+      nAlleles4Digit: l.n4,
+      topAlleles: (
+        top.all(l.locus, perLocus) as {
+          hla: string;
+          resolution: string;
+          n_mentions: number;
+        }[]
+      ).map((r) => ({ hla: r.hla, resolution: r.resolution, nMentions: r.n_mentions })),
+    }));
+}
+
+/** Une categorie clinique et ses complications, pour l'accueil. */
+export interface CategoryOverview {
+  category: string;
+  /** Somme des mentions des complications de la categorie. */
+  nMentions: number;
+  outcomes: { outcome: string; label: string; nMentions: number }[];
+}
+
+/**
+ * Complications regroupees par categorie, dans l'ordre clinique
+ * `CATEGORIES` ; a l'interieur, par mentions decroissantes. Libelles joints
+ * depuis `outcomes` — jamais la cle technique.
+ */
+export function getOutcomesByCategory(): CategoryOverview[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT outcome, label, category, n_mentions FROM outcomes
+        ORDER BY n_mentions DESC, label ASC`,
+    )
+    .all() as OutcomeSqlRow[];
+  const byCat = new Map<string, CategoryOverview>();
+  for (const r of rows) {
+    let entry = byCat.get(r.category);
+    if (!entry) {
+      entry = { category: r.category, nMentions: 0, outcomes: [] };
+      byCat.set(r.category, entry);
+    }
+    entry.nMentions += r.n_mentions;
+    entry.outcomes.push({ outcome: r.outcome, label: r.label, nMentions: r.n_mentions });
+  }
+  const rank = (c: string) => {
+    const i = (CATEGORIES as readonly string[]).indexOf(c);
+    return i === -1 ? CATEGORIES.length : i;
+  };
+  return [...byCat.values()].sort(
+    (a, b) => rank(a.category) - rank(b.category) || a.category.localeCompare(b.category),
+  );
+}
+
+/** Auteurs les plus publies du corpus (effectif descriptif). */
+export function getTopAuthors(limit = 6): Author[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT author_id, display_name, n_publications FROM authors
+        ORDER BY n_publications DESC, display_name ASC LIMIT ?`,
+    )
+    .all(limit) as {
+    author_id: string;
+    display_name: string;
+    n_publications: number;
+  }[];
+  return rows.map((r) => ({
+    authorId: r.author_id,
+    displayName: r.display_name,
+    nPublications: r.n_publications,
+  }));
+}
